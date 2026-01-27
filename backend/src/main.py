@@ -16,9 +16,9 @@ from google.cloud import tasks_v2
 from google.cloud.tasks_v2 import HttpMethod
 from datetime import datetime, timedelta
 from pydantic import BaseModel
-from config import supabase_client
+from src.config import supabase_client
 
-from config import (
+from src.config import (
     storage_client,
     tasks_client,
     gcs_client,
