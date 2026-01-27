@@ -172,6 +172,7 @@ Located in `video_analyzer.py`:
 
 ### In Progress
 - Testing & bug fixes
+- README documentation
 
 ### Planned (Future)
 1. **Advanced Search**
@@ -186,9 +187,13 @@ Located in `video_analyzer.py`:
    - ✅ Improved mobile design
 
 3. **Launch Prep**
-   - GitHub repository setup
+   - ✅ GitHub repository setup (https://github.com/yhukumdar/video-safety-app)
+   - ✅ Production deployment preparation
+     - Environment templates (.env.example)
+     - Deployment guide (DEPLOYMENT.md)
+     - Production checklist (PRODUCTION_CHECKLIST.md)
+     - Multiple platform options documented (Railway, Vercel, Render, GCP)
    - README documentation
-   - Production deployment
    - Beta testing
 
 4. **Mobile App** (Phase 4)
@@ -345,6 +350,45 @@ npx playwright show-report
 **Config:**
 - `playwright.config.js` - Test configuration
 - `frontend/vite.config.js` - Vite configuration
+
+---
+
+## Deployment
+
+### Production-Ready Documentation
+- **DEPLOYMENT.md** - Comprehensive guide for deploying to multiple platforms
+- **PRODUCTION_CHECKLIST.md** - Step-by-step verification checklist
+- **Environment Templates** - `.env.example` files for backend and frontend
+
+### Supported Platforms
+1. **Railway + Vercel** (Recommended)
+   - Backend: Railway (Python/FastAPI)
+   - Frontend: Vercel (React/Vite)
+   - Cost: ~$0-5/month
+
+2. **Render**
+   - Backend: Web Service
+   - Frontend: Static Site
+   - Cost: Free tier available
+
+3. **Google Cloud Platform**
+   - Backend: Cloud Run
+   - Frontend: Firebase Hosting
+   - Cost: Pay-as-you-go
+
+4. **DigitalOcean App Platform**
+   - Full-stack deployment
+   - Cost: ~$5-10/month
+
+### Required API Keys
+- **Supabase**: Database & Auth (Free tier: 500MB, 2GB storage)
+- **Gemini API**: Video analysis (Free tier: 60 req/min)
+- **Domain** (optional): Custom domain for production
+
+### Database Setup
+- All table schemas documented in project_context.md
+- Row Level Security (RLS) policies required
+- Automatic backups via Supabase
 
 ---
 
