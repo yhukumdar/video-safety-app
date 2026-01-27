@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+supabase
+google-cloud-storage
+google-cloud-tasks
+google-genai
+pydantic
+yt-dlp

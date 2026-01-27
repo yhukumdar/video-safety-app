@@ -1,0 +1,76 @@
+# Cursor AI Rules for Video Filtering App
+
+## Project Context
+This is a video filtering app for parents. Read PROJECT_CONTEXT.md for full details.
+
+## Tech Stack
+- Backend: FastAPI + Supabase + Gemini 2.5 Flash
+- Frontend: React + Vite + Tailwind
+- Database: Supabase (PostgreSQL)
+- Testing: Playwright
+
+## User's Coding Preferences
+- Direct implementation without extensive guides
+- Don't create extra documentation files unless asked
+- Show working code, not just explanations
+- Mobile-responsive by default
+- Keep it simple
+
+## Key Rules
+
+### When helping with backend:
+- Always use service_supabase_client for workers (bypasses RLS)
+- Use anon client for frontend code
+- Include retry logic for Gemini API calls
+- Never download videos - analyze via URL only
+
+### When helping with frontend:
+- Use Tailwind utility classes only (no custom CSS unless needed)
+- Keep components under 300 lines
+- Always filter data by parent_id for multi-tenancy
+- Use dark mode colors (slate-800, slate-900)
+
+### When modifying database:
+- Provide SQL to run in Supabase SQL Editor
+- Never break existing RLS policies
+- Always include created_at and updated_at
+
+### When writing tests:
+- Use Playwright for E2E tests
+- Keep test user credentials: test@example.com / testpassword123
+- Always wait for elements, never use fixed timeouts
+
+### When asked for features:
+- Implement requested feature
+- Don't add extra features without permission
+- Don't create guide files unless explicitly asked
+
+## File Locations
+- Backend: backend/src/workers/video_analyzer.py
+- Frontend: frontend/src/components/
+- Database: Supabase dashboard → SQL Editor
+- Tests: tests/e2e/
+
+## Common Patterns
+
+### Adding a new theme:
+1. Update Gemini prompt in video_analyzer.py
+2. No database changes needed (uses JSONB)
+
+### Adding a new score:
+1. Add to Gemini prompt response format
+2. Add column to reports table
+3. Update Dashboard.jsx display
+4. Update ContentPreferences.jsx if filterable
+
+### Adding a new kid preference:
+1. Add column to content_preferences table
+2. Update ContentPreferences.jsx UI
+3. Update checkVideoAgainstPreferences() in Dashboard.jsx
+
+## Current Status
+- MVP: ~98% complete
+- Focus: Testing & bug fixes
+- Next: Design improvements
+
+Read PROJECT_CONTEXT.md for comprehensive details.
