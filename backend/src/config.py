@@ -62,6 +62,7 @@ except Exception as e:
 # Export clients for use in other modules
 __all__ = [
     "supabase_client",
+    "service_supabase_client",
     "storage_client",
     "tasks_client",
     "GCS_BUCKET_NAME",

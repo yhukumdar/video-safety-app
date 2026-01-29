@@ -116,7 +116,7 @@ export default function Dashboard() {
         throw new Error('Could not extract video ID from URL')
       }
   
-      const response = await fetch('http://localhost:8000/analyze', {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

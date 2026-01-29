@@ -16,7 +16,7 @@ from google.cloud import tasks_v2
 from google.cloud.tasks_v2 import HttpMethod
 from datetime import datetime, timedelta
 from pydantic import BaseModel
-from src.config import supabase_client
+from src.config import supabase_client, service_supabase_client
 
 from src.config import (
     storage_client,
@@ -35,10 +35,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Add CORS middleware to allow requests from React dev server
+# Add CORS middleware to allow requests from React dev server and Firebase
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # React dev server
+    allow_origins=[
+        "http://localhost:5173",  # React dev server
+        "https://video-safety-app-9a6b5.web.app",  # Firebase Hosting
+        "https://video-safety-app-9a6b5.firebaseapp.com"  # Firebase alternate domain
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -360,12 +364,12 @@ async def analyze_youtube_video(request: dict):
 @app.post("/analyze")
 async def analyze_video(request: AnalyzeRequest):
     """
-    Create a new video analysis report
+    Create a new video analysis report and queue it for processing
     """
     try:
         # Extract video ID from YouTube URL
         youtube_url = request.youtube_url
-        
+
         if 'youtube.com' in youtube_url:
             # Format: https://www.youtube.com/watch?v=VIDEO_ID
             if 'v=' in youtube_url:
@@ -377,32 +381,65 @@ async def analyze_video(request: AnalyzeRequest):
             video_id = youtube_url.split('/')[-1].split('?')[0]
         else:
             raise HTTPException(status_code=400, detail="Invalid YouTube URL")
-        
-        # Create report in database with pending status
-        new_report = supabase_client.table('reports').insert({
+
+        # Create report in database with pending status (use service role client)
+        print(f"📝 Creating report in database...")
+        print(f"   URL: {youtube_url}")
+        print(f"   Video ID: {video_id}")
+        print(f"   Parent ID: {request.parent_id}")
+
+        new_report = service_supabase_client.table('reports').insert({
             'video_url': youtube_url,
             'video_path': f'youtube/{video_id}',
             'filename': f'YouTube: {video_id}',
             'status': 'pending',
             'parent_id': request.parent_id
         }).execute()
-        
+
+        print(f"   Insert result: {new_report.data}")
+
         if not new_report.data:
+            print(f"   ❌ Failed to create report - no data returned")
             raise HTTPException(status_code=500, detail="Failed to create report")
-        
+
         report_id = new_report.data[0]['id']
-        
+        print(f"   ✅ Report created with ID: {report_id}")
+
         return {
-            "message": "Analysis started successfully",
+            "message": "Analysis queued successfully",
             "report_id": report_id,
             "status": "pending"
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error creating report: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.post("/worker/process-pending")
+async def process_pending_reports_endpoint():
+    """
+    Worker endpoint that processes all pending video analysis reports.
+    This should be called periodically (e.g., by Cloud Scheduler every minute).
+    """
+    try:
+        from src.workers.video_analyzer import process_pending_reports
+
+        print("🔄 Worker started - checking for pending reports...")
+        processed_count = process_pending_reports()
+
+        return {
+            "status": "success",
+            "processed": processed_count,
+            "message": f"Processed {processed_count} report(s)"
+        }
+    except Exception as e:
+        print(f"❌ Worker error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Worker error: {str(e)}")
 
 
 if __name__ == "__main__":

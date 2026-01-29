@@ -4,6 +4,9 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
+# Install system dependencies (ffmpeg for video processing)
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 
