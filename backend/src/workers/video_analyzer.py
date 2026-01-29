@@ -209,7 +209,10 @@ def analyze_video_chunked(report_id, youtube_url, duration_seconds):
             print(f"   🤖 Analyzing chunk {i+1}/{num_chunks}...")
 
             # Analyze chunk with detailed prompt
+            chunk_start_time = i * CHUNK_DURATION_SECONDS
             prompt = f"""Analyze this video chunk ({i+1}/{num_chunks}) for child safety. Watch the ENTIRE chunk carefully.
+
+This chunk starts at {chunk_start_time} seconds ({chunk_start_time//60}:{chunk_start_time%60:02d}) in the full video.
 
 SCORING GUIDES:
 - violence_score: 0-20=none/cartoon, 21-50=mild slapstick, 51-80=action violence, 81-100=graphic
@@ -220,6 +223,15 @@ SCORING GUIDES:
 
 THEMES (only include what you ACTUALLY see):
 educational, entertainment, religious, lgbtq, political, scary, romantic, action, musical, animated, live-action
+
+KEY MOMENTS - Identify key moments with timestamps (both concerns AND positive moments):
+- timestamp_seconds: The exact time in seconds from the START OF THE FULL VIDEO (add {chunk_start_time} to the time within this chunk)
+- timestamp_display: The timestamp in MM:SS format from the start of the full video
+- type: The category (violence, scary, nsfw, profanity, educational, positive)
+- description: What happens at this moment (max 150 chars)
+- severity: low, moderate, or high
+
+For example, if you see violence at 35 seconds into THIS CHUNK, the full video timestamp is {chunk_start_time} + 35 = {chunk_start_time + 35} seconds.
 
 Be accurate and thorough. Report specific safety concerns and positive aspects you observe."""
 
@@ -237,11 +249,26 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
                     "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 3},
                     "summary": {"type": "string", "maxLength": 300},
                     "explanation": {"type": "string", "maxLength": 300},
-                    "recommendations": {"type": "string", "maxLength": 200}
+                    "recommendations": {"type": "string", "maxLength": 200},
+                    "key_moments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "timestamp_seconds": {"type": "integer", "minimum": 0},
+                                "timestamp_display": {"type": "string"},
+                                "type": {"type": "string", "enum": ["violence", "scary", "nsfw", "profanity", "educational", "positive"]},
+                                "description": {"type": "string", "maxLength": 150},
+                                "severity": {"type": "string", "enum": ["low", "moderate", "high"]}
+                            },
+                            "required": ["timestamp_seconds", "timestamp_display", "type", "description", "severity"]
+                        },
+                        "maxItems": 5
+                    }
                 },
                 "required": ["safety_score", "violence_score", "nsfw_score", "scary_score",
                             "profanity_detected", "themes", "concerns", "positive_aspects",
-                            "summary", "explanation", "recommendations"]
+                            "summary", "explanation", "recommendations", "key_moments"]
             }
 
             response = client.models.generate_content(
@@ -325,7 +352,7 @@ def merge_chunk_results(chunk_results):
             'summary': 'Analysis failed',
             'explanation': 'No chunks analyzed',
             'recommendations': 'Unable to provide recommendations',
-            'timestamps': []
+            'key_moments': []
         }
 
     # Average scores, but take MAX for safety-critical metrics
@@ -339,15 +366,20 @@ def merge_chunk_results(chunk_results):
     all_themes = set()
     all_concerns = []
     all_positive = []
+    all_key_moments = []
 
     for chunk in chunk_results:
         all_themes.update(chunk.get('themes', []))
         all_concerns.extend(chunk.get('concerns', []))
         all_positive.extend(chunk.get('positive_aspects', []))
+        all_key_moments.extend(chunk.get('key_moments', []))
 
     # Deduplicate concerns/positive
     unique_concerns = list(set(all_concerns))[:5]  # Keep top 5
     unique_positive = list(set(all_positive))[:5]
+
+    # Sort key moments by timestamp and keep top 10
+    sorted_key_moments = sorted(all_key_moments, key=lambda m: m.get('timestamp_seconds', 0))[:10]
 
     return {
         'safety_score': int(avg_safety),
@@ -361,7 +393,7 @@ def merge_chunk_results(chunk_results):
         'summary': f'Video analyzed in {len(chunk_results)} chunks',
         'explanation': f'Max violence: {max_violence}, NSFW: {max_nsfw}, Scary: {max_scary}',
         'recommendations': 'Review all concerns carefully for long videos',
-        'timestamps': []
+        'key_moments': sorted_key_moments
     }
 
 
@@ -437,6 +469,15 @@ SCORING GUIDES:
 THEMES (only include what you ACTUALLY see):
 educational, entertainment, religious, lgbtq, political, scary, romantic, action, musical, animated, live-action
 
+KEY MOMENTS - Identify 3-5 key moments with timestamps (both concerns AND positive moments):
+- timestamp_seconds: The exact time in seconds from the start of the video
+- timestamp_display: The timestamp in MM:SS format (e.g., "2:35" for 2 minutes 35 seconds)
+- type: The category (violence, scary, nsfw, profanity, educational, positive)
+- description: What happens at this moment (max 150 chars)
+- severity: low, moderate, or high
+
+For example, if you see violence at 155 seconds (2:35), record: timestamp_seconds=155, timestamp_display="2:35", type="violence", description="Character hits another with hammer", severity="moderate"
+
 Be accurate and thorough. Report specific safety concerns and positive aspects you observe."""
 
         # Response schema with maximum safe limits (tested to prevent truncation)
@@ -453,11 +494,26 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
                 "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 3},
                 "summary": {"type": "string", "maxLength": 300},
                 "explanation": {"type": "string", "maxLength": 300},
-                "recommendations": {"type": "string", "maxLength": 200}
+                "recommendations": {"type": "string", "maxLength": 200},
+                "key_moments": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "timestamp_seconds": {"type": "integer", "minimum": 0},
+                            "timestamp_display": {"type": "string"},
+                            "type": {"type": "string", "enum": ["violence", "scary", "nsfw", "profanity", "educational", "positive"]},
+                            "description": {"type": "string", "maxLength": 150},
+                            "severity": {"type": "string", "enum": ["low", "moderate", "high"]}
+                        },
+                        "required": ["timestamp_seconds", "timestamp_display", "type", "description", "severity"]
+                    },
+                    "maxItems": 5
+                }
             },
             "required": ["safety_score", "violence_score", "nsfw_score", "scary_score",
                         "profanity_detected", "themes", "concerns", "positive_aspects",
-                        "summary", "explanation", "recommendations"]
+                        "summary", "explanation", "recommendations", "key_moments"]
         }
 
         # Analyze directly from YouTube URL
