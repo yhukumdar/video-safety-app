@@ -20,12 +20,20 @@ from config import service_supabase_client, GEMINI_API_KEY
 # NEW SDK imports
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 
-# Create Gemini client with new SDK
-client = genai.Client(api_key=GEMINI_API_KEY)
+# Create Gemini client with v1alpha for media_resolution support
+client = genai.Client(
+    api_key=GEMINI_API_KEY,
+    http_options={'api_version': 'v1alpha'}
+)
 
 # Model name
 MODEL_NAME = 'gemini-2.5-flash'
+
+# Configurable constants
+MAX_DURATION_FOR_FULL_ANALYSIS = 30 * 60  # 30 minutes in seconds - use chunking if video is longer
+CHUNK_DURATION_SECONDS = 5 * 60  # 5 minutes per chunk
 
 def extract_video_id(youtube_url):
     """Extract video ID from YouTube URL"""
@@ -38,6 +46,33 @@ def extract_video_id(youtube_url):
         pass
     return None
 
+def get_video_duration(youtube_url):
+    """Get video duration in seconds using yt-dlp"""
+    try:
+        print(f"   🕐 Fetching duration with yt-dlp...")
+        result = subprocess.run(
+            ['yt-dlp', '--get-duration', '--no-warnings', '--quiet', youtube_url],
+            capture_output=True,
+            text=True,
+            timeout=120  # Increased timeout for slow networks
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            duration_str = result.stdout.strip()
+            print(f"   ✅ Raw duration: {duration_str}")
+            # Parse duration (formats: "MM:SS" or "HH:MM:SS" or "H:MM:SS")
+            parts = duration_str.split(':')
+            if len(parts) == 2:  # MM:SS
+                return int(parts[0]) * 60 + int(parts[1])
+            elif len(parts) == 3:  # HH:MM:SS or H:MM:SS
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        else:
+            print(f"   ⚠️  yt-dlp failed: {result.stderr.strip()}")
+    except subprocess.TimeoutExpired:
+        print(f"   ⚠️  Duration fetch timed out after 120s")
+    except Exception as e:
+        print(f"   ⚠️  Could not fetch video duration: {e}")
+    return None
+
 def get_video_title(youtube_url):
     """Fetch video title from YouTube URL using yt-dlp"""
     try:
@@ -45,7 +80,7 @@ def get_video_title(youtube_url):
             ['yt-dlp', '--get-title', youtube_url],
             capture_output=True,
             text=True,
-            timeout=30  # Increased from 10 to 30 seconds
+            timeout=60  # Increased to 60 seconds for long videos
         )
         if result.returncode == 0:
             title = result.stdout.strip()
@@ -53,7 +88,7 @@ def get_video_title(youtube_url):
                 return title
     except Exception as e:
         print(f"   ⚠️  Could not fetch video title: {e}")
-    
+
     # Fallback: Use video ID if available
     video_id = extract_video_id(youtube_url)
     if video_id:
@@ -107,344 +142,241 @@ def retry_with_backoff(max_retries=4, base_delay=3):
     return decorator
 
 
-def analyze_video(report_id, youtube_url):
-    """Analyze a YouTube video directly via URL (no download needed!)"""
-    
+def analyze_video_chunked(report_id, youtube_url, duration_seconds):
+    """Analyze long videos by splitting into chunks"""
+    import tempfile
+    import shutil
+
+    temp_dir = None
     try:
-        print(f"   🎥 Video URL: {youtube_url}")
-        print(f"   🆔 Report ID: {report_id}")
-        
         # Fetch video title
         print(f"   📺 Fetching video title...")
         video_title = get_video_title(youtube_url)
         print(f"   ✅ Title: {video_title}")
-        
-        # Update status to processing
-        print(f"   📝 Updating status to 'processing'...")
+
+        # Update status
         service_supabase_client.table('reports').update({
             'status': 'processing',
             'video_title': video_title
         }).eq('id', report_id).execute()
-        
-        # Create analysis prompt
-        # Create prompt
-        prompt = """You are a content safety analyst for parents reviewing videos their children want to watch.
-                    CRITICAL INSTRUCTIONS:
-                    - You MUST actually watch and analyze the ENTIRE video
-                    - DO NOT make assumptions based on titles or descriptions
-                    - Only report issues you can actually observe in the video
-                    - Be accurate and truthful above all else
 
-                    Your task: Analyze this video comprehensively and provide a detailed safety assessment.
+        # Create temp directory
+        temp_dir = tempfile.mkdtemp()
+        video_path = os.path.join(temp_dir, 'video.mp4')
 
-                    ANALYSIS REQUIREMENTS:
+        # Download video
+        print(f"   ⬇️  Downloading video...")
+        download_result = subprocess.run(
+            ['yt-dlp', '-f', 'worst', '-o', video_path, youtube_url],
+            capture_output=True,
+            text=True,
+            timeout=600  # 10 minutes max
+        )
 
-                    1. VIOLENCE ASSESSMENT (0-100 scale):
-                    - 0-20: No violence (safe for all ages)
-                    - 21-50: Mild cartoon/slapstick violence (ages 7+)
-                    - 51-80: Moderate action violence (ages 10+)
-                    - 81-100: Graphic/realistic violence (ages 16+)
+        if download_result.returncode != 0:
+            raise Exception(f"Failed to download video: {download_result.stderr}")
 
-                    2. NSFW CONTENT ASSESSMENT (0-100 scale):
-                    - 0-20: Completely appropriate (safe for all)
-                    - 21-50: Mild suggestive content (ages 10+)
-                    - 51-80: Moderate inappropriate content (ages 13+)
-                    - 81-100: Explicit sexual content (ages 18+)
+        print(f"   ✅ Downloaded: {os.path.getsize(video_path) / 1024 / 1024:.1f} MB")
 
-                    3. LANGUAGE ASSESSMENT (boolean):
-                    - Listen to the audio carefully
-                    - Only mark true if you ACTUALLY HEAR profanity
+        # Split into chunks using configurable duration
+        chunk_duration = CHUNK_DURATION_SECONDS
+        num_chunks = (duration_seconds // chunk_duration) + 1
+        print(f"   ✂️  Splitting into {num_chunks} chunks of {chunk_duration/60:.0f} minutes each...")
 
-                    4. OVERALL SAFETY SCORE (0-100):
-                    - 90-100: Excellent for young children (ages 5+)
-                    - 70-89: Good for older children (ages 8+)
-                    - 50-69: Suitable for tweens/teens (ages 11+)
-                    - 30-49: Mature content (ages 14+)
-                    - 0-29: Not suitable for children (ages 17+)
+        chunk_results = []
+        for i in range(num_chunks):
+            start_time = i * chunk_duration
+            chunk_path = os.path.join(temp_dir, f'chunk_{i}.mp4')
 
-                    5. CONTENT THEMES DETECTION:
-                    Detect and list ALL themes present in the video. Only include themes you ACTUALLY observe.
-                    
-                    Possible themes:
-                    - "educational" - Teaching/learning content (alphabet, math, science, etc.)
-                    - "entertainment" - Pure entertainment (music, comedy, games)
-                    - "religious" - Religious content, prayer, worship, religious figures/stories
-                    - "lgbtq" - LGBTQ+ characters, themes, pride flags, same-sex relationships
-                    - "political" - Political figures, campaigns, partisan messaging
-                    - "scary" - Horror elements, monsters, jump scares, dark themes
-                    - "romantic" - Romance, dating, relationships, kissing
-                    - "action" - Action sequences, fighting (not violent, but action-oriented)
-                    - "musical" - Music videos, singing, dancing
-                    - "animated" - Cartoon/animated content
-                    - "live-action" - Real people, not animated
-                    
-                    IMPORTANT: 
-                    - Only include themes you can CLEARLY observe in the video
-                    - Do NOT guess or assume based on video title
-                    - Educational content with diverse characters is NOT automatically "lgbtq"
-                    - Historical or news content about religion/politics should be marked accurately
+            # Split chunk with ffmpeg
+            split_result = subprocess.run(
+                ['ffmpeg', '-ss', str(start_time), '-i', video_path, '-t', str(chunk_duration),
+                 '-c', 'copy', chunk_path, '-y'],
+                capture_output=True,
+                timeout=300
+            )
 
-                    6. SCARY CONTENT ASSESSMENT (0-100 scale):
-                    - 0-20: Not scary at all
-                    - 21-40: Mildly suspenseful or tense
-                    - 41-60: Moderately scary (monsters, dark themes)
-                    - 61-80: Very scary (horror elements, jump scares)
-                    - 81-100: Extremely frightening (intense horror)
+            if split_result.returncode != 0:
+                print(f"   ⚠️  Failed to create chunk {i+1}, skipping...")
+                continue
 
-                    7. EXPLANATION:
-                    - Write 2-3 clear sentences
-                    - ONLY describe what you actually observed
-                    - Be specific about the actual content
+            print(f"   📤 Uploading chunk {i+1}/{num_chunks}...")
 
-                    8. RECOMMENDATIONS:
-                    - Provide age guidance based on what you observed
-                    - Keep it concise (1-2 sentences)
+            # Upload to Gemini Files API
+            with open(chunk_path, 'rb') as f:
+                file_upload = client.files.upload(file=f)
 
-                    RESPONSE FORMAT (return ONLY valid JSON, keep it concise):
-                    {
-                    "safety_score": <integer 0-100>,
-                    "violence_score": <integer 0-100>,
-                    "nsfw_score": <integer 0-100>,
-                    "scary_score": <integer 0-100>,
-                    "profanity_detected": <boolean>,
-                    "themes": ["theme1", "theme2"],
-                    "summary": "<2-3 sentences describing what happens in the video>",
-                    "concerns": ["<specific concern 1>", "<specific concern 2>"],
-                    "positive_aspects": ["<positive aspect 1>", "<positive aspect 2>"],
-                    "explanation": "<2-3 sentences about safety assessment>",
-                    "recommendations": "<1-2 sentences with age guidance>",
-                    "timestamps": []
-                    }
+            print(f"   🤖 Analyzing chunk {i+1}/{num_chunks}...")
 
-                    IMPORTANT:
-                    - Keep response under 500 words
-                    - summary: Brief description of video content (what happens)
-                    - concerns: List specific safety issues found (empty array if none)
-                    - positive_aspects: List educational/positive elements (empty array if none)
-                    - timestamps should almost always be []
-                    - Only include themes you ACTUALLY observed in the video
-                    - Be objective and accurate about content themes
+            # Analyze chunk
+            prompt = f"""Analyze this video chunk ({i+1}/{num_chunks}) for child safety. Return ONLY valid JSON with: safety_score, violence_score, nsfw_score, scary_score, profanity_detected, themes, concerns, positive_aspects."""
 
-                    Now analyze this video:"""
-        
-        # Analyze directly from YouTube URL
-        print(f"   🤖 Analyzing video directly from URL...")
-        print(f"   ⚡ No download needed - using Gemini's native YouTube support")
-        
-        # Wrap Gemini API call with retry logic for 503 errors
-        @retry_with_backoff(max_retries=4, base_delay=3)
-        def call_gemini_api():
-            return client.models.generate_content(
+            response = client.models.generate_content(
                 model=MODEL_NAME,
-                contents=types.Content(
-                    parts=[
-                        types.Part(
-                            file_data=types.FileData(
-                                file_uri=youtube_url,
-                                mime_type='video/mp4'
-                            )
-                        ),
-                        types.Part(text=prompt)
-                    ]
-                ),
+                contents=[file_upload, prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.1,
-                    top_p=0.7,
-                    top_k=20,
-                    max_output_tokens=4096
+                    media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW
                 )
             )
-        
-        # Call Gemini with automatic retry on 503 errors
-        response = call_gemini_api()
-        
-        print(f"\n{'='*60}")
-        print(f"📄 RAW GEMINI RESPONSE:")
-        print(f"{'='*60}")
-        print(response.text[:500] + ("..." if len(response.text) > 500 else ""))
-        print(f"{'='*60}\n")
-        
-        # Parse JSON with robust error handling
-        response_text = response.text.strip()
-        
-        # Remove markdown code fences
-        if '```' in response_text:
-            response_text = response_text.replace('```json', '').replace('```', '').strip()
-        
-        # Try to parse complete JSON
-        result = None
-        try:
-            result = json.loads(response_text)
-            print(f"   ✅ JSON parsed successfully")
-            
-        except json.JSONDecodeError as e:
-            print(f"   ⚠️  JSON parsing failed (response too long or incomplete)")
-            print(f"   🔧 Extracting essential fields with regex...")
-            
-            # Use regex to extract just what we need
-            import re
-            
-            # Extract scores using regex
-            safety_match = re.search(r'"safety_score":\s*(\d+)', response_text)
-            violence_match = re.search(r'"violence_score":\s*(\d+)', response_text)
-            nsfw_match = re.search(r'"nsfw_score":\s*(\d+)', response_text)
-            scary_match = re.search(r'"scary_score":\s*(\d+)', response_text)
-            profanity_match = re.search(r'"profanity_detected":\s*(true|false)', response_text, re.IGNORECASE)
-            summary_match = re.search(r'"summary":\s*"([^"]+)"', response_text)
-            explanation_match = re.search(r'"explanation":\s*"([^"]+)"', response_text)
-            recommendations_match = re.search(r'"recommendations":\s*"([^"]+)"', response_text)
-            themes_match = re.search(r'"themes":\s*\[(.*?)\]', response_text)
-            concerns_match = re.search(r'"concerns":\s*\[(.*?)\]', response_text)
-            positive_match = re.search(r'"positive_aspects":\s*\[(.*?)\]', response_text)
-            
-            result = {}
-            result['safety_score'] = int(safety_match.group(1)) if safety_match else 50
-            result['violence_score'] = int(violence_match.group(1)) if violence_match else 0
-            result['nsfw_score'] = int(nsfw_match.group(1)) if nsfw_match else 0
-            result['scary_score'] = int(scary_match.group(1)) if scary_match else 0
-            result['profanity_detected'] = (profanity_match.group(1).lower() == 'true') if profanity_match else False
-            result['summary'] = summary_match.group(1) if summary_match else "Video content analyzed."
-            result['explanation'] = explanation_match.group(1) if explanation_match else "Video analyzed."
-            result['recommendations'] = recommendations_match.group(1) if recommendations_match else "Please review scores."
-            
-            # Extract themes from JSON array string
-            if themes_match:
-                themes_str = themes_match.group(1)
-                theme_items = re.findall(r'"([^"]+)"', themes_str)
-                result['themes'] = theme_items
-            else:
-                result['themes'] = []
-            
-            # Extract concerns from JSON array string
-            if concerns_match:
-                concerns_str = concerns_match.group(1)
-                concern_items = re.findall(r'"([^"]+)"', concerns_str)
-                result['concerns'] = concern_items
-            else:
-                result['concerns'] = []
-            
-            # Extract positive aspects from JSON array string
-            if positive_match:
-                positive_str = positive_match.group(1)
-                positive_items = re.findall(r'"([^"]+)"', positive_str)
-                result['positive_aspects'] = positive_items
-            else:
-                result['positive_aspects'] = []
-            
-            result['timestamps'] = []
-            
-            print(f"   ✅ Successfully extracted core fields")
-        
-        # Validate and extract final scores
-        safety_score = max(0, min(100, int(result.get('safety_score', 50))))
-        violence_score = max(0, min(100, int(result.get('violence_score', 0))))
-        nsfw_score = max(0, min(100, int(result.get('nsfw_score', 0))))
-        scary_score = max(0, min(100, int(result.get('scary_score', 0))))
-        profanity_detected = bool(result.get('profanity_detected', False))
-        
-        # Ensure required text fields
-        if not result.get('explanation'):
-            result['explanation'] = f"Video analyzed with safety score: {safety_score}/100"
-        
-        if not result.get('summary'):
-            result['summary'] = f"Video content analyzed with a safety score of {safety_score}/100."
-        
-        if not result.get('recommendations'):
-            if safety_score >= 80:
-                result['recommendations'] = "Suitable for children with minimal parental guidance."
-            else:
-                result['recommendations'] = "Parents should preview before showing to younger children."
-        
-        # Ensure arrays exist
-        if 'themes' not in result or not isinstance(result.get('themes'), list):
-            result['themes'] = []
-        
-        if 'concerns' not in result or not isinstance(result.get('concerns'), list):
-            result['concerns'] = []
-        
-        if 'positive_aspects' not in result or not isinstance(result.get('positive_aspects'), list):
-            result['positive_aspects'] = []
-        
-        if 'timestamps' not in result or not isinstance(result.get('timestamps'), list):
-            result['timestamps'] = []
-        
-        # Calculate age recommendation based on scores
-        def calculate_age_recommendation(violence, scary, nsfw, profanity):
-            """Calculate minimum recommended age based on content scores"""
-            min_age = 3  # Start with youngest age
-            
-            # Violence raises age
-            if violence > 70: min_age = max(min_age, 13)
-            elif violence > 50: min_age = max(min_age, 10)
-            elif violence > 30: min_age = max(min_age, 7)
-            elif violence > 15: min_age = max(min_age, 5)
-            
-            # Scary content raises age
-            if scary > 70: min_age = max(min_age, 13)
-            elif scary > 50: min_age = max(min_age, 10)
-            elif scary > 30: min_age = max(min_age, 7)
-            elif scary > 15: min_age = max(min_age, 5)
-            
-            # NSFW content raises age significantly
-            if nsfw > 60: min_age = max(min_age, 18)
-            elif nsfw > 40: min_age = max(min_age, 16)
-            elif nsfw > 20: min_age = max(min_age, 13)
-            elif nsfw > 10: min_age = max(min_age, 10)
-            
-            # Profanity raises age
-            if profanity: min_age = max(min_age, 10)
-            
-            return min_age
-        
-        age_recommendation = calculate_age_recommendation(
-            violence_score, 
-            scary_score, 
-            nsfw_score, 
-            profanity_detected
-        )
-        result['age_recommendation'] = age_recommendation
-        
-        print(f"   ✅ Analysis complete!")
-        print(f"   📊 Safety: {safety_score}/100, Violence: {violence_score}, NSFW: {nsfw_score}, Scary: {scary_score}, Profanity: {profanity_detected}")
-        print(f"   🎂 Recommended Age: {age_recommendation}+")
-        if result.get('themes'):
-            print(f"   🏷️  Themes: {', '.join(result['themes'])}")
-        
+
+            # Parse response
+            response_text = response.text.strip().replace('```json', '').replace('```', '').strip()
+            try:
+                chunk_result = json.loads(response_text)
+                chunk_results.append(chunk_result)
+                print(f"   ✅ Chunk {i+1} analyzed")
+            except:
+                print(f"   ⚠️  Failed to parse chunk {i+1} results")
+
+            # Clean up chunk
+            os.remove(chunk_path)
+
+        # Merge results from all chunks
+        print(f"   🔄 Merging results from {len(chunk_results)} chunks...")
+        merged_result = merge_chunk_results(chunk_results)
+
         # Save to database
-        print(f"   💾 Saving results to database...")
+        age_recommendation = calculate_age_recommendation(
+            merged_result['violence_score'],
+            merged_result['scary_score'],
+            merged_result['nsfw_score'],
+            merged_result['profanity_detected']
+        )
+        merged_result['age_recommendation'] = age_recommendation
+
         service_supabase_client.table('reports').update({
             'status': 'completed',
-            'safety_score': safety_score,
-            'violence_score': violence_score,
-            'nsfw_score': nsfw_score,
-            'scary_score': scary_score,
-            'profanity_detected': profanity_detected,
-            'analysis_result': result,
+            'safety_score': merged_result['safety_score'],
+            'violence_score': merged_result['violence_score'],
+            'nsfw_score': merged_result['nsfw_score'],
+            'scary_score': merged_result['scary_score'],
+            'profanity_detected': merged_result['profanity_detected'],
+            'analysis_result': merged_result,
             'analyzed_at': datetime.now().isoformat()
         }).eq('id', report_id).execute()
-        
-        # Save content tags separately for easy filtering
-        themes = result.get('themes', [])
-        if themes:
-            print(f"   🏷️  Saving content themes: {', '.join(themes)}")
-            # Delete old tags for this report
-            service_supabase_client.table('content_tags').delete().eq('report_id', report_id).execute()
-            
-            # Insert new tags
-            tags_to_insert = [
-                {
-                    'report_id': report_id,
-                    'tag_name': theme,
-                    'confidence': 0.9  # Default confidence
-                }
-                for theme in themes
-            ]
-            
-            if tags_to_insert:
-                service_supabase_client.table('content_tags').insert(tags_to_insert).execute()
-        
-        print(f"   ✅ Analysis saved successfully!")
-        
+
+        print(f"   ✅ Chunked analysis complete!")
+        print(f"   📊 Safety: {merged_result['safety_score']}/100")
+
+    except Exception as e:
+        print(f"   ❌ Chunked analysis failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        service_supabase_client.table('reports').update({
+            'status': 'failed',
+            'error_message': str(e)
+        }).eq('id', report_id).execute()
+
+    finally:
+        # Clean up temp directory
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+
+def merge_chunk_results(chunk_results):
+    """Merge analysis results from multiple chunks"""
+    if not chunk_results:
+        return {
+            'safety_score': 50,
+            'violence_score': 0,
+            'nsfw_score': 0,
+            'scary_score': 0,
+            'profanity_detected': False,
+            'themes': [],
+            'concerns': [],
+            'positive_aspects': [],
+            'summary': 'Analysis failed',
+            'explanation': 'No chunks analyzed',
+            'recommendations': 'Unable to provide recommendations',
+            'timestamps': []
+        }
+
+    # Average scores, but take MAX for safety-critical metrics
+    avg_safety = sum(c.get('safety_score', 50) for c in chunk_results) / len(chunk_results)
+    max_violence = max(c.get('violence_score', 0) for c in chunk_results)
+    max_nsfw = max(c.get('nsfw_score', 0) for c in chunk_results)
+    max_scary = max(c.get('scary_score', 0) for c in chunk_results)
+    any_profanity = any(c.get('profanity_detected', False) for c in chunk_results)
+
+    # Merge unique themes and concerns
+    all_themes = set()
+    all_concerns = []
+    all_positive = []
+
+    for chunk in chunk_results:
+        all_themes.update(chunk.get('themes', []))
+        all_concerns.extend(chunk.get('concerns', []))
+        all_positive.extend(chunk.get('positive_aspects', []))
+
+    # Deduplicate concerns/positive
+    unique_concerns = list(set(all_concerns))[:5]  # Keep top 5
+    unique_positive = list(set(all_positive))[:5]
+
+    return {
+        'safety_score': int(avg_safety),
+        'violence_score': max_violence,
+        'nsfw_score': max_nsfw,
+        'scary_score': max_scary,
+        'profanity_detected': any_profanity,
+        'themes': list(all_themes),
+        'concerns': unique_concerns,
+        'positive_aspects': unique_positive,
+        'summary': f'Video analyzed in {len(chunk_results)} chunks',
+        'explanation': f'Max violence: {max_violence}, NSFW: {max_nsfw}, Scary: {max_scary}',
+        'recommendations': 'Review all concerns carefully for long videos',
+        'timestamps': []
+    }
+
+
+def calculate_age_recommendation(violence_score, scary_score, nsfw_score, profanity):
+    """Calculate minimum recommended age based on content scores"""
+    min_age = 3
+
+    if nsfw_score > 60: min_age = max(min_age, 18)
+    elif nsfw_score > 40: min_age = max(min_age, 16)
+    elif nsfw_score > 20: min_age = max(min_age, 13)
+    elif nsfw_score > 10: min_age = max(min_age, 10)
+
+    if violence_score > 70: min_age = max(min_age, 13)
+    elif violence_score > 50: min_age = max(min_age, 10)
+    elif violence_score > 30: min_age = max(min_age, 7)
+    elif violence_score > 15: min_age = max(min_age, 5)
+
+    if scary_score > 70: min_age = max(min_age, 13)
+    elif scary_score > 50: min_age = max(min_age, 10)
+    elif scary_score > 30: min_age = max(min_age, 7)
+    elif scary_score > 15: min_age = max(min_age, 5)
+
+    if profanity: min_age = max(min_age, 10)
+
+    return min_age
+
+
+def analyze_video(report_id, youtube_url):
+    """Analyze a YouTube video using chunked analysis for reliability"""
+
+    try:
+        print(f"   🎥 Video URL: {youtube_url}")
+        print(f"   🆔 Report ID: {report_id}")
+
+        # Check video duration to determine chunk count
+        print(f"   ⏱️  Checking video duration...")
+        duration_seconds = get_video_duration(youtube_url)
+        if duration_seconds:
+            duration_minutes = duration_seconds / 60
+            print(f"   📏 Duration: {duration_minutes:.1f} minutes ({duration_seconds}s)")
+        else:
+            print(f"   ⚠️  Duration detection failed - estimating 30 minutes")
+            # Default estimate if duration detection fails
+            duration_seconds = 1800  # 30 minutes
+
+        # ALWAYS use chunked analysis for reliability (prevents JSON truncation)
+        print(f"   🔄 Using chunked analysis for all videos (prevents truncation)")
+        print(f"   ✂️  Will split into {CHUNK_DURATION_SECONDS/60:.0f}-minute segments for detailed analysis")
+        return analyze_video_chunked(report_id, youtube_url, duration_seconds)
+
     except Exception as e:
         print(f"   ❌ Failed: {str(e)}")
         import traceback
@@ -461,27 +393,45 @@ def analyze_video(report_id, youtube_url):
 def process_pending_reports():
     """Query and process all pending reports"""
     try:
+        print(f"   🔍 Querying database for pending reports...")
+
         # Query pending reports
         result = service_supabase_client.table('reports').select('*').eq('status', 'pending').execute()
-        
+
         reports = result.data if result.data else []
-        
+
+        print(f"   📊 Query result: {len(reports)} report(s) found")
+
         if not reports:
+            print(f"   💤 No pending reports to process")
             return 0
-        
-        print(f"📋 Found {len(reports)} pending report(s)")
-        print()
-        
+
+        print(f"\n{'='*60}")
+        print(f"📋 FOUND {len(reports)} PENDING REPORT(S)")
+        print(f"{'='*60}\n")
+
         # Process each report
         for idx, report in enumerate(reports, 1):
-            print(f"[{idx}/{len(reports)}] Processing: {report['filename']}")
+            print(f"\n{'='*60}")
+            print(f"[{idx}/{len(reports)}] PROCESSING REPORT")
+            print(f"{'='*60}")
+            print(f"   📝 Filename: {report['filename']}")
+            print(f"   🆔 Report ID: {report['id']}")
+            print(f"   🔗 URL: {report['video_url']}")
+            print(f"   ⏰ Created: {report.get('created_at', 'unknown')}")
+            print()
+
             analyze_video(report['id'], report['video_url'])
-            
+
             # Small delay between videos
             if idx < len(reports):
-                print(f"⏸️  Waiting 2 seconds before next video...")
+                print(f"\n⏸️  Waiting 2 seconds before next video...")
                 time.sleep(2)
-        
+
+        print(f"\n{'='*60}")
+        print(f"✅ COMPLETED PROCESSING {len(reports)} REPORT(S)")
+        print(f"{'='*60}\n")
+
         return len(reports)
         
     except Exception as e:
