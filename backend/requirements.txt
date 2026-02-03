@@ -7,3 +7,5 @@ google-cloud-tasks
 google-genai
 pydantic
 yt-dlp
+python-multipart
+requests

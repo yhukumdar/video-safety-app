@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { CheckCircle, XCircle, Clock, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { CheckCircle, XCircle, Clock, AlertTriangle, ExternalLink, Search, Camera, Upload, Link as LinkIcon } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import Navigation from './Navigation'
@@ -11,13 +11,25 @@ import Tooltip, { TooltipIcon } from './Tooltip'
 export default function Dashboard() {
   const { user, parentProfile } = useAuth()
   const [currentView, setCurrentView] = useState('dashboard')
-  
+
+  // Search tab state
+  const [activeTab, setActiveTab] = useState('url') // 'url', 'name', 'image'
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [searching, setSearching] = useState(false)
+  const [selectedImage, setSelectedImage] = useState(null)
+  const fileInputRef = useRef(null)
+  const cameraInputRef = useRef(null)
+
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState(null)
   const [error, setError] = useState(null)
   const [reports, setReports] = useState([])
   const [expandedReports, setExpandedReports] = useState({})
+  const [expandedSummaries, setExpandedSummaries] = useState({})
+  const [expandedConcerns, setExpandedConcerns] = useState({})
+  const [expandedPositives, setExpandedPositives] = useState({})
   const [selectedThemes, setSelectedThemes] = useState([])
   const [kidProfiles, setKidProfiles] = useState([])
   const [kidPreferences, setKidPreferences] = useState({})
@@ -167,6 +179,81 @@ export default function Dashboard() {
     }))
   }
 
+  const toggleSummary = (reportId) => {
+    setExpandedSummaries(prev => ({
+      ...prev,
+      [reportId]: !prev[reportId]
+    }))
+  }
+
+  const toggleConcern = (reportId) => {
+    setExpandedConcerns(prev => ({
+      ...prev,
+      [reportId]: !prev[reportId]
+    }))
+  }
+
+  const togglePositive = (reportId) => {
+    setExpandedPositives(prev => ({
+      ...prev,
+      [reportId]: !prev[reportId]
+    }))
+  }
+
+  // Helper to parse and linkify timestamps in text
+  const linkifyTimestamps = (text, videoUrl) => {
+    // Match timestamps like "2:30", "12:45", "1:23:45" or "at 150 seconds"
+    const timestampRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?|at (\d+) seconds?/g
+    const parts = []
+    let lastIndex = 0
+    let match
+
+    while ((match = timestampRegex.exec(text)) !== null) {
+      // Add text before match
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index))
+      }
+
+      // Calculate seconds
+      let seconds
+      if (match[4]) {
+        // "at X seconds" format
+        seconds = parseInt(match[4])
+      } else {
+        // "MM:SS" or "HH:MM:SS" format
+        const hours = match[3] ? parseInt(match[1]) : 0
+        const minutes = match[3] ? parseInt(match[2]) : parseInt(match[1])
+        const secs = match[3] ? parseInt(match[3]) : parseInt(match[2])
+        seconds = hours * 3600 + minutes * 60 + secs
+      }
+
+      const timestampUrl = videoUrl.includes('?')
+        ? `${videoUrl}&t=${seconds}s`
+        : `${videoUrl}?t=${seconds}s`
+
+      parts.push(
+        <a
+          key={match.index}
+          href={timestampUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-400 hover:text-blue-300 underline font-medium"
+        >
+          {match[0]}
+        </a>
+      )
+
+      lastIndex = match.index + match[0].length
+    }
+
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex))
+    }
+
+    return parts.length > 0 ? parts : text
+  }
+
   const toggleTheme = (theme) => {
     setSelectedThemes(prev => {
       if (prev.includes(theme)) {
@@ -183,45 +270,45 @@ export default function Dashboard() {
 
   const checkVideoAgainstPreferences = (report) => {
     if (!report.analysis_result) return []
-    
+
     const warnings = []
     const analysis = report.analysis_result
-    
+
     kidProfiles.forEach(kid => {
       const prefs = kidPreferences[kid.id]
       if (!prefs) return // No preferences set for this kid
-      
+
       const kidWarnings = []
-      
+
       // Check blocked themes
       const reportThemes = analysis.themes || []
-      const blockedThemesFound = reportThemes.filter(theme => 
+      const blockedThemesFound = reportThemes.filter(theme =>
         prefs.blocked_themes?.includes(theme)
       )
       if (blockedThemesFound.length > 0) {
         kidWarnings.push(`Contains blocked themes: ${blockedThemesFound.join(', ')}`)
       }
-      
+
       // Check violence threshold
       if ((analysis.violence_score || 0) > prefs.max_violence_score) {
         kidWarnings.push(`Violence score (${analysis.violence_score}) exceeds limit (${prefs.max_violence_score})`)
       }
-      
+
       // Check scary threshold
       if ((analysis.scary_score || 0) > prefs.max_scary_score) {
         kidWarnings.push(`Scary score (${analysis.scary_score}) exceeds limit (${prefs.max_scary_score})`)
       }
-      
+
       // Check NSFW threshold
       if ((analysis.nsfw_score || 0) > prefs.max_nsfw_score) {
         kidWarnings.push(`NSFW score (${analysis.nsfw_score}) exceeds limit (${prefs.max_nsfw_score})`)
       }
-      
+
       // Check profanity
       if (analysis.profanity_detected && !prefs.allow_profanity) {
         kidWarnings.push('Contains profanity')
       }
-      
+
       // Add to warnings array
       if (kidWarnings.length > 0) {
         warnings.push({
@@ -232,7 +319,7 @@ export default function Dashboard() {
       } else {
         // Check if video has allowed themes (if any are set)
         if (prefs.allowed_themes?.length > 0) {
-          const hasAllowedTheme = reportThemes.some(theme => 
+          const hasAllowedTheme = reportThemes.some(theme =>
             prefs.allowed_themes.includes(theme)
           )
           if (hasAllowedTheme || reportThemes.length === 0) {
@@ -252,8 +339,158 @@ export default function Dashboard() {
         }
       }
     })
-    
+
     return warnings
+  }
+
+  // Search by name handler
+  const handleSearchByName = async () => {
+    if (!searchQuery.trim()) return
+
+    setSearching(true)
+    setError(null)
+    setSearchResults([])
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/search/youtube?q=${encodeURIComponent(searchQuery)}&max_results=10`
+      )
+
+      if (!response.ok) {
+        throw new Error('Failed to search YouTube')
+      }
+
+      const data = await response.json()
+      setSearchResults(data.videos || [])
+    } catch (err) {
+      console.error('Search error:', err)
+      setError(err.message)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  // Image upload handlers
+  const handleFileSelect = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    setSelectedImage(file)
+    await handleSearchByImage(file)
+  }
+
+  const handleCameraCapture = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    setSelectedImage(file)
+    await handleSearchByImage(file)
+  }
+
+  const handleSearchByImage = async (imageFile) => {
+    setSearching(true)
+    setError(null)
+    setSearchResults([])
+
+    try {
+      const formData = new FormData()
+      formData.append('file', imageFile)
+
+      console.log('🖼️ Uploading image:', imageFile.name, imageFile.type)
+
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/search/image`,
+        {
+          method: 'POST',
+          body: formData
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        console.error('Backend error:', errorData)
+        throw new Error(errorData.detail || 'Failed to search by image')
+      }
+
+      const data = await response.json()
+      console.log('✅ Search results:', data)
+      setSearchResults(data.videos || [])
+
+      if (data.videos.length === 0) {
+        setError('No matching videos found. Try a different image or search by name.')
+      }
+    } catch (err) {
+      console.error('Image search error:', err)
+      setError(err.message || 'Failed to analyze image. Please try again.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  // Analyze video from search results
+  const handleAnalyzeFromSearch = async (videoUrl) => {
+    if (!parentProfile) {
+      setError('Please log in to analyze videos')
+      return
+    }
+
+    console.log('🎬 Starting analysis for:', videoUrl)
+    console.log('👤 Parent ID:', parentProfile.id)
+    console.log('🔗 API URL:', import.meta.env.VITE_API_URL)
+
+    setUploading(true)
+    setError(null)
+
+    try {
+      const requestBody = {
+        youtube_url: videoUrl,
+        parent_id: parentProfile.id
+      }
+      console.log('📤 Request body:', requestBody)
+
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      })
+
+      console.log('📡 Response status:', response.status)
+      console.log('📡 Response ok:', response.ok)
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('❌ Backend error text:', errorText)
+
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+        } catch {
+          errorData = { detail: errorText }
+        }
+
+        console.error('❌ Parsed error:', errorData)
+        throw new Error(errorData.detail || errorText || `Server error: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('✅ Analysis started:', result)
+
+      setUploadStatus('success')
+      setSearchResults([]) // Clear search results
+      setSearchQuery('')
+      setSelectedImage(null)
+      setActiveTab('url') // Switch back to URL tab
+      fetchReports()
+
+      setTimeout(() => setUploadStatus(null), 3000)
+    } catch (err) {
+      console.error('❌ Full error object:', err)
+      console.error('❌ Error message:', err.message)
+      console.error('❌ Error stack:', err.stack)
+      setError(err.message || 'Failed to start analysis. Please check console for details.')
+    } finally {
+      setUploading(false)
+    }
   }
 
   // ========================================
@@ -270,54 +507,252 @@ export default function Dashboard() {
         {/* Dashboard View */}
         {currentView === 'dashboard' && (
           <>
-            {/* Upload Section */}
+            {/* Search/Upload Section with Tabs */}
             <div className="bg-slate-800 rounded-xl p-4 sm:p-6 md:p-8 mb-8 md:mb-12 border border-slate-700">
               <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">Add Video for Analysis</h2>
-              
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  YouTube Video URL
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-all"
-                />
-                <p className="text-sm text-slate-500 mt-2">
-                  Paste a YouTube video URL to analyze its content
-                </p>
+
+              {/* Tabs */}
+              <div className="flex gap-2 mb-6 border-b border-slate-700">
+                <button
+                  onClick={() => {
+                    setActiveTab('url')
+                    setSearchResults([])
+                    setError(null)
+                  }}
+                  className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
+                    activeTab === 'url'
+                      ? 'text-blue-400 border-b-2 border-blue-400'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <LinkIcon className="w-4 h-4" />
+                  <span className="hidden sm:inline">By URL</span>
+                  <span className="sm:hidden">URL</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('name')
+                    setSearchResults([])
+                    setError(null)
+                  }}
+                  className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
+                    activeTab === 'name'
+                      ? 'text-blue-400 border-b-2 border-blue-400'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Search className="w-4 h-4" />
+                  <span className="hidden sm:inline">Search Name</span>
+                  <span className="sm:hidden">Name</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('image')
+                    setSearchResults([])
+                    setError(null)
+                  }}
+                  className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
+                    activeTab === 'image'
+                      ? 'text-blue-400 border-b-2 border-blue-400'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Camera className="w-4 h-4" />
+                  <span className="hidden sm:inline">By Image</span>
+                  <span className="sm:hidden">Image</span>
+                </button>
               </div>
 
+              {/* Tab Content */}
+              <div>
+                {/* URL Tab */}
+                {activeTab === 'url' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      YouTube Video URL
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      value={youtubeUrl}
+                      onChange={(e) => setYoutubeUrl(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && youtubeUrl && !uploading) {
+                          handleYouTubeSubmit()
+                        }
+                      }}
+                      className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-all mb-2"
+                    />
+                    <p className="text-sm text-slate-500 mb-4">
+                      Paste a YouTube video URL to analyze its content
+                    </p>
+                    <button
+                      onClick={handleYouTubeSubmit}
+                      disabled={!youtubeUrl || uploading || !parentProfile}
+                      className="w-full py-3 sm:py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-base sm:text-lg transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                    >
+                      {uploading ? 'Analyzing...' : 'Analyze Video'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Search by Name Tab */}
+                {activeTab === 'name' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Search YouTube Videos
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Enter video name or keywords..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && searchQuery && !searching) {
+                            handleSearchByName()
+                          }
+                        }}
+                        className="flex-1 px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-all"
+                      />
+                      <button
+                        onClick={handleSearchByName}
+                        disabled={!searchQuery || searching}
+                        className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                      >
+                        {searching ? <LoadingSpinner size="sm" /> : <Search className="w-5 h-5" />}
+                      </button>
+                    </div>
+                    <p className="text-sm text-slate-500 mt-2">
+                      Search for videos by name, channel, or keywords
+                    </p>
+                  </div>
+                )}
+
+                {/* Search by Image Tab */}
+                {activeTab === 'image' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Upload Scene or Screenshot
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                      <input
+                        ref={cameraInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleCameraCapture}
+                        className="hidden"
+                      />
+
+                      {/* Upload from files */}
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={searching}
+                        className="flex-1 py-2.5 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        <Upload className="w-4 h-4" />
+                        <span className="hidden sm:inline">Choose Image</span>
+                        <span className="sm:hidden">Upload</span>
+                      </button>
+
+                      {/* Camera button - works best on mobile */}
+                      <button
+                        onClick={() => cameraInputRef.current?.click()}
+                        disabled={searching}
+                        className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg text-sm font-semibold transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {searching ? <LoadingSpinner size="sm" /> : (
+                          <>
+                            <Camera className="w-4 h-4" />
+                            <span className="hidden sm:inline">Take Photo</span>
+                            <span className="sm:hidden">Camera</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-2">
+                      💡 Camera button opens camera on mobile, file picker on desktop
+                    </p>
+                    {selectedImage && (
+                      <div className="mt-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                        <p className="text-sm text-green-300">
+                          ✓ Selected: {selectedImage.name}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Status Messages */}
               {uploading && (
-                <div className="flex items-center justify-center p-4 sm:p-6 bg-blue-500/10 rounded-lg border border-blue-500 mb-4">
+                <div className="flex items-center justify-center p-4 sm:p-6 bg-blue-500/10 rounded-lg border border-blue-500 mt-4">
                   <LoadingSpinner size="md" className="mr-3" />
                   <p className="text-blue-400 text-sm sm:text-base">Analyzing video...</p>
                 </div>
               )}
 
+              {searching && (
+                <div className="flex items-center justify-center p-4 sm:p-6 bg-blue-500/10 rounded-lg border border-blue-500 mt-4">
+                  <LoadingSpinner size="md" className="mr-3" />
+                  <p className="text-blue-400 text-sm sm:text-base">Searching...</p>
+                </div>
+              )}
+
               {uploadStatus === 'success' && (
-                <div className="flex items-center justify-center p-6 bg-green-500/10 rounded-lg border border-green-500 mb-4">
+                <div className="flex items-center justify-center p-6 bg-green-500/10 rounded-lg border border-green-500 mt-4">
                   <CheckCircle className="w-6 h-6 text-green-400 mr-3" />
                   <p className="text-green-400">Analysis started successfully!</p>
                 </div>
               )}
 
               {error && (
-                <div className="flex items-center justify-center p-6 bg-red-500/10 rounded-lg border border-red-500 mb-4">
+                <div className="flex items-center justify-center p-6 bg-red-500/10 rounded-lg border border-red-500 mt-4">
                   <XCircle className="w-6 h-6 text-red-400 mr-3" />
                   <p className="text-red-400">{error}</p>
                 </div>
               )}
 
-              <button
-                onClick={handleYouTubeSubmit}
-                disabled={!youtubeUrl || uploading || !parentProfile}
-                className="w-full py-3 sm:py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-base sm:text-lg transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
-              >
-                {uploading ? 'Analyzing...' : 'Analyze Video'}
-              </button>
+              {/* Search Results */}
+              {searchResults.length > 0 && (activeTab === 'name' || activeTab === 'image') && (
+                <div className="mt-6">
+                  <h3 className="text-lg font-semibold mb-4">Search Results ({searchResults.length})</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
+                    {searchResults.map((video) => (
+                      <div
+                        key={video.video_id}
+                        className="bg-slate-900 rounded-lg p-4 border border-slate-700 hover:border-blue-500 transition-all cursor-pointer"
+                        onClick={() => handleAnalyzeFromSearch(video.video_url)}
+                      >
+                        <img
+                          src={video.thumbnail}
+                          alt={video.title}
+                          className="w-full h-32 object-cover rounded mb-3"
+                        />
+                        <h4 className="font-medium text-sm mb-1 line-clamp-2">{video.title}</h4>
+                        <p className="text-xs text-slate-400">{video.channel}</p>
+                        <button
+                          className="mt-3 w-full py-2 px-4 bg-blue-500 hover:bg-blue-600 rounded text-sm font-medium transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleAnalyzeFromSearch(video.video_url)
+                          }}
+                        >
+                          Analyze This Video
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Theme Filter Section */}
@@ -617,32 +1052,74 @@ export default function Dashboard() {
                             {/* Expanded Details */}
                             {expandedReports[report.id] && (
                               <div className="mt-4 space-y-3 text-sm">
-                                {analysisResult.summary && 
-                                 analysisResult.summary.trim() && 
+                                {/* Expandable Summary */}
+                                {analysisResult.summary &&
+                                 analysisResult.summary.trim() &&
                                  !analysisResult.summary.includes('Video content analyzed') && (
                                   <div className="bg-slate-900 rounded-lg p-3">
                                     <p className="text-xs text-slate-400 mb-1">Summary</p>
-                                    <p className="text-slate-200">{analysisResult.summary}</p>
+                                    <div>
+                                      <p className="text-slate-200">
+                                        {expandedSummaries[report.id] || analysisResult.summary.length <= 50
+                                          ? analysisResult.summary
+                                          : `${analysisResult.summary.substring(0, 50)}...`}
+                                      </p>
+                                      {analysisResult.summary.length > 50 && (
+                                        <button
+                                          onClick={() => toggleSummary(report.id)}
+                                          className="mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
+                                        >
+                                          {expandedSummaries[report.id] ? 'Show Less ▲' : 'Show More ▼'}
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                 )}
+
                                 {analysisResult.concerns && analysisResult.concerns.length > 0 && (
                                   <div className="bg-slate-900 rounded-lg p-3">
                                     <p className="text-xs text-slate-400 mb-2">Concerns</p>
-                                    <ul className="list-disc list-inside space-y-1">
-                                      {analysisResult.concerns.map((concern, idx) => (
-                                        <li key={idx} className="text-red-400">{concern}</li>
+                                    <ul className="list-disc list-inside space-y-2">
+                                      {(expandedConcerns[report.id]
+                                        ? analysisResult.concerns
+                                        : analysisResult.concerns.slice(0, 3)
+                                      ).map((concern, idx) => (
+                                        <li key={idx} className="text-red-400">
+                                          <span>{linkifyTimestamps(concern, report.video_url)}</span>
+                                        </li>
                                       ))}
                                     </ul>
+                                    {analysisResult.concerns.length > 3 && (
+                                      <button
+                                        onClick={() => toggleConcern(report.id)}
+                                        className="mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium"
+                                      >
+                                        {expandedConcerns[report.id] ? 'Show Less ▲' : `Show More (${analysisResult.concerns.length - 3} more) ▼`}
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                                 {analysisResult.positive_aspects && analysisResult.positive_aspects.length > 0 && (
                                   <div className="bg-slate-900 rounded-lg p-3">
                                     <p className="text-xs text-slate-400 mb-2">Positive Aspects</p>
-                                    <ul className="list-disc list-inside space-y-1">
-                                      {analysisResult.positive_aspects.map((aspect, idx) => (
-                                        <li key={idx} className="text-green-400">{aspect}</li>
+                                    <ul className="list-disc list-inside space-y-2">
+                                      {(expandedPositives[report.id]
+                                        ? analysisResult.positive_aspects
+                                        : analysisResult.positive_aspects.slice(0, 3)
+                                      ).map((aspect, idx) => (
+                                        <li key={idx} className="text-green-400">
+                                          <span>{linkifyTimestamps(aspect, report.video_url)}</span>
+                                        </li>
                                       ))}
                                     </ul>
+                                    {analysisResult.positive_aspects.length > 3 && (
+                                      <button
+                                        onClick={() => togglePositive(report.id)}
+                                        className="mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium"
+                                      >
+                                        {expandedPositives[report.id] ? 'Show Less ▲' : `Show More (${analysisResult.positive_aspects.length - 3} more) ▼`}
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                               </div>
@@ -665,7 +1142,12 @@ export default function Dashboard() {
                         {report.status === 'failed' && (
                           <div className="text-center py-6">
                             <XCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
-                            <p className="text-red-400 text-sm">Analysis failed</p>
+                            <p className="text-red-400 text-sm font-medium">Analysis failed</p>
+                            {report.error_message && (
+                              <p className="text-xs text-red-300 mt-2 max-w-md mx-auto">
+                                {report.error_message}
+                              </p>
+                            )}
                           </div>
                         )}
 

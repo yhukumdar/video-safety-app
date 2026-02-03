@@ -169,6 +169,11 @@ Located in `video_analyzer.py`:
   - Threshold slider guidance
   - Theme selection hints
   - Age recommendation context
+- Clickable timestamps
+  - Summary without timestamps (clean overview)
+  - Concerns with clickable timestamps (e.g., "Violence at 2:35")
+  - Positive aspects with clickable timestamps (e.g., "Teaches sharing at 1:45")
+  - All timestamps link directly to YouTube video at that moment
 
 ### Just Completed ✅ (Jan 28, 2026)
 - ✅ Production deployment to GCP
@@ -423,5 +428,19 @@ npx playwright show-report
 
 ---
 
-**Last Updated:** January 28, 2026 - Production Deployment Complete! 🎉
+**Last Updated:** February 2, 2026 - Clickable Timestamps Complete! 🎉
 **By:** Yasemin (with Claude's assistance)
+
+---
+
+## 🔒 CRITICAL: Gemini API Configuration
+
+**DO NOT MODIFY WITHOUT TESTING!**
+
+Both video analysis and image search MUST use:
+- **API Version**: `v1alpha` (NOT v1beta)
+- **Model**: `gemini-2.5-flash` (NOT 1.5-flash or 2.0-flash-exp)
+
+See `backend/GEMINI_CONFIG.md` for detailed documentation.
+
+**Last Verified Working:** February 2, 2026

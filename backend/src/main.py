@@ -5,18 +5,21 @@ This application provides endpoints for:
 - Health checks
 - Generating signed URLs for video uploads to Google Cloud Storage
 - Creating Cloud Tasks for video analysis
+- YouTube video search (by name and by image)
 """
 import os
 import json
+import base64
+import requests
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.cloud import tasks_v2
 from google.cloud.tasks_v2 import HttpMethod
-from datetime import datetime, timedelta
-from pydantic import BaseModel
-from src.config import supabase_client, service_supabase_client
+from google import genai
+from google.genai import types
+from src.config import supabase_client, service_supabase_client, YOUTUBE_API_KEY, GEMINI_API_KEY
 
 from src.config import (
     storage_client,
@@ -88,68 +91,6 @@ async def health_check():
 
 
 @app.post("/api/upload/signed-url")
-async def get_signed_upload_url(request: dict):
-    try:
-        print("=== Upload Request Started ===")
-        print(f"Request data: {request}")
-        
-        filename = request.get("filename")
-        content_type = request.get("content_type", "video/mp4")
-        
-        print(f"Filename: {filename}")
-        print(f"Content-Type: {content_type}")
-        
-        # Generate unique path
-        from datetime import datetime, timedelta
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        video_path = f"videos/{timestamp}_{filename}"
-        
-        print(f"Video path: {video_path}")
-        print(f"Bucket: {GCS_BUCKET_NAME}")
-        
-        # Generate signed URL
-        bucket = gcs_client.bucket(GCS_BUCKET_NAME)
-        blob = bucket.blob(video_path)
-        
-        print("Generating signed URL...")
-        upload_url = blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(minutes=15),
-            method="PUT",
-            content_type=content_type
-        )
-        
-        print(f"Signed URL generated: {upload_url[:100]}...")
-        
-        video_url = f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{video_path}"
-        
-        print("Saving to Supabase...")
-        from config import service_supabase_client
-        
-        result = service_supabase_client.table('reports').insert({
-            'video_url': video_url,
-            'video_path': video_path,
-            'filename': filename,
-            'status': 'pending'
-        }).execute()
-        
-        print(f"Supabase insert result: {result.data}")
-        
-        report_id = result.data[0]['id'] if result.data else None
-        print(f"Report ID: {report_id}")
-        
-        return {
-            "upload_url": upload_url,
-            "video_path": video_path,
-            "report_id": report_id
-        }
-    except Exception as e:
-        print(f"=== ERROR in upload endpoint ===")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error message: {str(e)}")
-        import traceback
-        print(f"Full traceback:\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
 async def get_signed_upload_url(request: dict):
     try:
         filename = request.get("filename")
@@ -440,6 +381,202 @@ async def process_pending_reports_endpoint():
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Worker error: {str(e)}")
+
+
+@app.get("/api/search/youtube")
+async def search_youtube_by_name(q: str, max_results: int = 10):
+    """
+    Search YouTube videos by name/keywords using YouTube Data API.
+
+    Args:
+        q: Search query (video name/keywords)
+        max_results: Maximum number of results to return (default: 10)
+
+    Returns:
+        List of video results with id, title, thumbnail, channel, description
+    """
+    try:
+        if not YOUTUBE_API_KEY:
+            raise HTTPException(status_code=500, detail="YouTube API key not configured")
+
+        # Call YouTube Data API
+        url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            "part": "snippet",
+            "q": q,
+            "type": "video",
+            "maxResults": max_results,
+            "key": YOUTUBE_API_KEY
+        }
+
+        response = requests.get(url, params=params)
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=f"YouTube API error: {response.text}")
+
+        data = response.json()
+
+        # Format results
+        videos = []
+        for item in data.get("items", []):
+            video_id = item["id"]["videoId"]
+            snippet = item["snippet"]
+            videos.append({
+                "video_id": video_id,
+                "video_url": f"https://www.youtube.com/watch?v={video_id}",
+                "title": snippet["title"],
+                "thumbnail": snippet["thumbnails"]["medium"]["url"],
+                "channel": snippet["channelTitle"],
+                "description": snippet["description"],
+                "published_at": snippet["publishedAt"]
+            })
+
+        return {
+            "status": "success",
+            "count": len(videos),
+            "videos": videos
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error searching YouTube: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/search/image")
+async def search_youtube_by_image(file: UploadFile = File(...)):
+    """
+    Search YouTube videos by uploading an image/screenshot.
+    Uses Gemini Vision to analyze the image and generate search query.
+
+    Args:
+        file: Image file (JPG, PNG, etc.)
+
+    Returns:
+        List of matching YouTube videos
+    """
+    try:
+        print(f"📸 Image upload received: {file.filename}, type: {file.content_type}")
+
+        if not GEMINI_API_KEY:
+            print("❌ Gemini API key not configured")
+            raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+        if not YOUTUBE_API_KEY:
+            print("❌ YouTube API key not configured")
+            raise HTTPException(status_code=500, detail="YouTube API key not configured")
+
+        # Read image file
+        image_data = await file.read()
+        print(f"✅ Image data read: {len(image_data)} bytes")
+
+        # Initialize Gemini client with v1alpha (same as video analyzer)
+        client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options={'api_version': 'v1alpha'}
+        )
+
+        # Analyze image with Gemini Vision
+        print("🤖 Analyzing image with Gemini Vision...")
+
+        prompt = """Analyze this image and describe what you see in detail. Focus on:
+- What is happening in the scene?
+- Who are the characters/people?
+- What is the setting/location?
+- Any text, logos, or distinctive elements?
+- What video/show/movie might this be from?
+
+Generate 2-3 specific YouTube search queries that would help find this video.
+Return as JSON: {"description": "detailed description", "search_queries": ["query1", "query2", "query3"]}"""
+
+        # Upload image to Gemini (using same model as video analyzer)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                types.Content(
+                    parts=[
+                        types.Part.from_bytes(data=image_data, mime_type=file.content_type),
+                        types.Part(text=prompt)
+                    ]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                response_mime_type="application/json"
+            )
+        )
+
+        # Parse Gemini response
+        result = json.loads(response.text)
+        description = result.get("description", "")
+        search_queries = result.get("search_queries", [])
+
+        print(f"📝 Image description: {description}")
+        print(f"🔍 Search queries: {search_queries}")
+
+        # Search YouTube with the generated queries
+        all_videos = []
+        seen_video_ids = set()
+
+        for query in search_queries[:2]:  # Use top 2 queries
+            url = "https://www.googleapis.com/youtube/v3/search"
+            params = {
+                "part": "snippet",
+                "q": query,
+                "type": "video",
+                "maxResults": 5,
+                "key": YOUTUBE_API_KEY
+            }
+
+            youtube_response = requests.get(url, params=params)
+
+            if youtube_response.status_code == 200:
+                data = youtube_response.json()
+
+                for item in data.get("items", []):
+                    video_id = item["id"]["videoId"]
+
+                    # Avoid duplicates
+                    if video_id in seen_video_ids:
+                        continue
+
+                    seen_video_ids.add(video_id)
+                    snippet = item["snippet"]
+
+                    all_videos.append({
+                        "video_id": video_id,
+                        "video_url": f"https://www.youtube.com/watch?v={video_id}",
+                        "title": snippet["title"],
+                        "thumbnail": snippet["thumbnails"]["medium"]["url"],
+                        "channel": snippet["channelTitle"],
+                        "description": snippet["description"],
+                        "published_at": snippet["publishedAt"]
+                    })
+
+        return {
+            "status": "success",
+            "image_description": description,
+            "search_queries": search_queries,
+            "count": len(all_videos),
+            "videos": all_videos
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error processing image: {error_msg}")
+        import traceback
+        traceback.print_exc()
+
+        # Provide more helpful error messages
+        if "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+            raise HTTPException(status_code=429, detail="API quota exceeded. Please try again later.")
+        elif "api key" in error_msg.lower():
+            raise HTTPException(status_code=500, detail="Invalid API key configuration")
+        else:
+            raise HTTPException(status_code=500, detail=f"Image analysis failed: {error_msg}")
 
 
 if __name__ == "__main__":

@@ -15,12 +15,15 @@ from functools import wraps
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import service_supabase_client, GEMINI_API_KEY
+from config import service_supabase_client, GEMINI_API_KEY, YOUTUBE_API_KEY
 
 # NEW SDK imports
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
+import requests
+import re
+from datetime import timedelta
 
 # Create Gemini client with v1alpha for media_resolution support
 client = genai.Client(
@@ -46,51 +49,107 @@ def extract_video_id(youtube_url):
         pass
     return None
 
-def get_video_duration(youtube_url):
-    """Get video duration in seconds using yt-dlp"""
+def parse_youtube_duration(duration_iso):
+    """Parse ISO 8601 duration to seconds (e.g., PT1H2M10S -> 3730)"""
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_iso)
+    if not match:
+        return None
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    return hours * 3600 + minutes * 60 + seconds
+
+def get_video_metadata_api(video_id):
+    """Get video metadata using official YouTube Data API v3 (STABLE - never breaks!)"""
     try:
-        print(f"   🕐 Fetching duration with yt-dlp...")
+        print(f"   📺 Fetching metadata from YouTube Data API (official)...")
+        url = "https://www.googleapis.com/youtube/v3/videos"
+        params = {
+            "part": "snippet,contentDetails",
+            "id": video_id,
+            "key": YOUTUBE_API_KEY
+        }
+        response = requests.get(url, params=params, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('items'):
+                item = data['items'][0]
+                title = item['snippet']['title']
+                duration_iso = item['contentDetails']['duration']
+                duration_seconds = parse_youtube_duration(duration_iso)
+
+                print(f"   ✅ Title: {title}")
+                print(f"   ✅ Duration: {duration_seconds}s ({duration_seconds//60}m {duration_seconds%60}s)")
+
+                return {
+                    'title': title,
+                    'duration_seconds': duration_seconds
+                }
+        else:
+            print(f"   ⚠️  YouTube API error: {response.status_code}")
+    except Exception as e:
+        print(f"   ⚠️  Could not fetch from YouTube API: {e}")
+    return None
+
+def get_video_duration(youtube_url):
+    """Get video duration - uses official YouTube Data API (primary) with yt-dlp fallback"""
+    video_id = extract_video_id(youtube_url)
+
+    if video_id and YOUTUBE_API_KEY:
+        # Try official API first (stable, won't break)
+        metadata = get_video_metadata_api(video_id)
+        if metadata and metadata.get('duration_seconds'):
+            return metadata['duration_seconds']
+
+    # Fallback to yt-dlp only if API fails
+    print(f"   ⚠️  YouTube API unavailable, falling back to yt-dlp...")
+    try:
         result = subprocess.run(
-            ['yt-dlp', '--get-duration', '--no-warnings', '--quiet', youtube_url],
+            ['yt-dlp', '--cookies', 'cookies.txt', '--get-duration', '--no-warnings', '--quiet', youtube_url],
             capture_output=True,
             text=True,
-            timeout=120  # Increased timeout for slow networks
+            timeout=30
         )
         if result.returncode == 0 and result.stdout.strip():
             duration_str = result.stdout.strip()
-            print(f"   ✅ Raw duration: {duration_str}")
-            # Parse duration (formats: "MM:SS" or "HH:MM:SS" or "H:MM:SS")
             parts = duration_str.split(':')
             if len(parts) == 2:  # MM:SS
                 return int(parts[0]) * 60 + int(parts[1])
-            elif len(parts) == 3:  # HH:MM:SS or H:MM:SS
+            elif len(parts) == 3:  # HH:MM:SS
                 return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-        else:
-            print(f"   ⚠️  yt-dlp failed: {result.stderr.strip()}")
-    except subprocess.TimeoutExpired:
-        print(f"   ⚠️  Duration fetch timed out after 120s")
     except Exception as e:
-        print(f"   ⚠️  Could not fetch video duration: {e}")
+        print(f"   ⚠️  yt-dlp fallback failed: {e}")
+
     return None
 
 def get_video_title(youtube_url):
-    """Fetch video title from YouTube URL using yt-dlp"""
+    """Get video title - uses official YouTube Data API (primary) with yt-dlp fallback"""
+    video_id = extract_video_id(youtube_url)
+
+    if video_id and YOUTUBE_API_KEY:
+        # Try official API first (stable, won't break)
+        metadata = get_video_metadata_api(video_id)
+        if metadata and metadata.get('title'):
+            return metadata['title']
+
+    # Fallback to yt-dlp only if API fails
+    print(f"   ⚠️  YouTube API unavailable, falling back to yt-dlp...")
     try:
         result = subprocess.run(
-            ['yt-dlp', '--get-title', youtube_url],
+            ['yt-dlp', '--cookies', 'cookies.txt', '--get-title', youtube_url],
             capture_output=True,
             text=True,
-            timeout=60  # Increased to 60 seconds for long videos
+            timeout=30
         )
         if result.returncode == 0:
             title = result.stdout.strip()
             if title:
                 return title
     except Exception as e:
-        print(f"   ⚠️  Could not fetch video title: {e}")
+        print(f"   ⚠️  yt-dlp fallback failed: {e}")
 
-    # Fallback: Use video ID if available
-    video_id = extract_video_id(youtube_url)
+    # Last resort: Use video ID
     if video_id:
         return f"YouTube Video ({video_id})"
     return "YouTube Video"
@@ -167,7 +226,7 @@ def analyze_video_chunked(report_id, youtube_url, duration_seconds):
         # Download video
         print(f"   ⬇️  Downloading video...")
         download_result = subprocess.run(
-            ['yt-dlp', '-f', 'worst', '-o', video_path, youtube_url],
+            ['yt-dlp', '--cookies', 'cookies.txt', '-f', 'worst', '-o', video_path, youtube_url],
             capture_output=True,
             text=True,
             timeout=600  # 10 minutes max
@@ -223,6 +282,14 @@ SCORING GUIDES:
 
 THEMES (only include what you ACTUALLY see):
 educational, entertainment, religious, lgbtq, political, scary, romantic, action, musical, animated, live-action
+
+SUMMARY - Provide a brief overview of this chunk WITHOUT timestamps. Just describe what happens in this part.
+
+CONCERNS - List specific safety concerns WITH timestamps in MM:SS format from the START OF THE FULL VIDEO. Format: "Description at 2:35"
+Example: If violence happens 35 seconds into this chunk, report it as "Violence at {(chunk_start_time + 35)//60}:{(chunk_start_time + 35)%60:02d}"
+
+POSITIVE ASPECTS - List positive moments WITH timestamps in MM:SS format from the START OF THE FULL VIDEO. Format: "Description at 2:35"
+Example: If teaching moment happens 20 seconds into this chunk, report it as "Teaches lesson at {(chunk_start_time + 20)//60}:{(chunk_start_time + 20)%60:02d}"
 
 KEY MOMENTS - Identify key moments with timestamps (both concerns AND positive moments):
 - timestamp_seconds: The exact time in seconds from the START OF THE FULL VIDEO (add {chunk_start_time} to the time within this chunk)
@@ -469,6 +536,14 @@ SCORING GUIDES:
 THEMES (only include what you ACTUALLY see):
 educational, entertainment, religious, lgbtq, political, scary, romantic, action, musical, animated, live-action
 
+SUMMARY - Provide a brief overview of the video WITHOUT timestamps. Just describe what the video is about.
+
+CONCERNS - List specific safety concerns WITH timestamps in MM:SS format. Format: "Description at 2:35" or "Issue happens at 10:20"
+Example: "Character uses violent language at 2:35", "Scary monster appears at 5:12"
+
+POSITIVE ASPECTS - List positive educational or entertaining moments WITH timestamps in MM:SS format. Format: "Description at 2:35"
+Example: "Teaches sharing at 1:45", "Beautiful music at 3:20"
+
 KEY MOMENTS - Identify 3-5 key moments with timestamps (both concerns AND positive moments):
 - timestamp_seconds: The exact time in seconds from the start of the video
 - timestamp_display: The timestamp in MM:SS format (e.g., "2:35" for 2 minutes 35 seconds)
@@ -538,7 +613,7 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
                     temperature=0.1,
                     top_p=0.7,
                     top_k=20,
-                    max_output_tokens=2048,  # Lower limit to prevent truncation
+                    max_output_tokens=4096,  # Increased to prevent truncation
                     media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
                     response_mime_type="application/json",
                     response_schema=response_schema
@@ -555,9 +630,60 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
             print(f"   ❌ Empty response - video may be restricted")
             raise Exception("Gemini returned empty response - video may be age-restricted or unavailable")
 
-        # Parse JSON
-        result = json.loads(response.text)
-        print(f"   ✅ JSON parsed successfully")
+        # Parse JSON with error handling
+        print(f"   📄 Response length: {len(response.text)} chars")
+        print(f"   📄 Response preview: {response.text[:500]}...")
+
+        try:
+            result = json.loads(response.text)
+            print(f"   ✅ JSON parsed successfully")
+        except json.JSONDecodeError as e:
+            print(f"   ❌ JSON Parse Error: {str(e)}")
+            print(f"   📄 Full response: {response.text}")
+
+            # Try to fix common JSON issues
+            import re
+            cleaned_text = response.text
+
+            # Remove trailing commas before closing braces/brackets
+            cleaned_text = re.sub(r',(\s*[}\]])', r'\1', cleaned_text)
+
+            # Try to find and extract the main JSON object
+            json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+            if json_match:
+                try:
+                    result = json.loads(json_match.group())
+                    print(f"   ✅ Extracted JSON successfully after cleaning")
+                except Exception as clean_error:
+                    print(f"   ❌ Cleaning failed: {str(clean_error)}")
+                    # Return safe defaults if all parsing fails
+                    print(f"   ⚠️  Using safe default values due to parse failure")
+                    result = {
+                        "safety_score": 50,
+                        "violence_score": 0,
+                        "nsfw_score": 0,
+                        "scary_score": 0,
+                        "profanity_detected": False,
+                        "themes": [],
+                        "concerns": ["Unable to fully analyze - using safe defaults"],
+                        "positive_aspects": [],
+                        "summary": "Analysis incomplete due to API response error",
+                        "key_moments": []
+                    }
+            else:
+                print(f"   ⚠️  No JSON found, using safe defaults")
+                result = {
+                    "safety_score": 50,
+                    "violence_score": 0,
+                    "nsfw_score": 0,
+                    "scary_score": 0,
+                    "profanity_detected": False,
+                    "themes": [],
+                    "concerns": ["Unable to analyze - API error"],
+                    "positive_aspects": [],
+                    "summary": "Analysis failed",
+                    "key_moments": []
+                }
 
         # Extract and validate scores
         safety_score = max(0, min(100, int(result.get('safety_score', 50))))
@@ -615,6 +741,7 @@ def process_pending_reports():
     """Query and process all pending reports"""
     try:
         print(f"   🔍 Querying database for pending reports...")
+        print(f"   🔗 Supabase URL: {service_supabase_client.supabase_url}")
 
         # Query pending reports
         result = service_supabase_client.table('reports').select('*').eq('status', 'pending').execute()
@@ -622,6 +749,10 @@ def process_pending_reports():
         reports = result.data if result.data else []
 
         print(f"   📊 Query result: {len(reports)} report(s) found")
+
+        # Debug: Query ALL reports to see what's there
+        all_reports = service_supabase_client.table('reports').select('id,status,created_at').order('created_at', desc=True).limit(5).execute()
+        print(f"   🔍 Last 5 reports (any status): {all_reports.data}")
 
         if not reports:
             print(f"   💤 No pending reports to process")

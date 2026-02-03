@@ -1,0 +1,24 @@
+# Ignore Node.js files (used only for local testing)
+node_modules/
+package.json
+package-lock.json
+playwright.config.js
+
+# Ignore test files
+tests/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Ignore local environment
+.env
+venv/
+env/
+
+# Ignore git
+.git/
+.gitignore

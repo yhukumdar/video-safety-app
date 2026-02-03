@@ -22,6 +22,7 @@ CLOUD_TASKS_QUEUE_NAME = os.getenv("CLOUD_TASKS_QUEUE_NAME", "video-analysis-que
 SERVICE_ACCOUNT_PATH = os.getenv("SERVICE_ACCOUNT_PATH", "service-account.json")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 # Create a service role client for backend operations
 service_supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -70,4 +71,5 @@ __all__ = [
     "CLOUD_TASKS_LOCATION",
     "CLOUD_TASKS_QUEUE_NAME",
     "GEMINI_API_KEY",
+    "YOUTUBE_API_KEY",
 ]

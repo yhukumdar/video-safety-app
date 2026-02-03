@@ -28,3 +28,7 @@ test_*.py
 
 # OS
 .DS_Store
+
+# YouTube cookies (sensitive)
+cookies.txt
+*.txt.bak
