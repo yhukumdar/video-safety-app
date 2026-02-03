@@ -35,7 +35,7 @@ client = genai.Client(
 MODEL_NAME = 'gemini-2.5-flash'
 
 # Configurable constants
-MAX_DURATION_FOR_FULL_ANALYSIS = 30 * 60  # 30 minutes in seconds - use chunking if video is longer
+MAX_DURATION_FOR_FULL_ANALYSIS = 60 * 60  # 60 minutes in seconds - use chunking if video is longer (try direct analysis for most videos to avoid cookie dependency)
 CHUNK_DURATION_SECONDS = 10 * 60  # 10 minutes per chunk (optimal balance of detail vs API calls)
 
 def extract_video_id(youtube_url):
