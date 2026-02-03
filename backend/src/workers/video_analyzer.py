@@ -554,13 +554,15 @@ educational, entertainment, religious, lgbtq, political, scary, romantic, action
 
 SUMMARY - Provide a brief overview of the video WITHOUT timestamps. Just describe what the video is about.
 
-CONCERNS - List specific safety concerns WITH timestamps in MM:SS format. Format: "Description at 2:35" or "Issue happens at 10:20"
+CONCERNS - IMPORTANT: ALWAYS include timestamps! List specific safety concerns WITH timestamps in MM:SS format. Format: "Description at 2:35" or "Issue happens at 10:20"
 Example: "Character uses violent language at 2:35", "Scary monster appears at 5:12"
+You can list up to 10 concerns.
 
-POSITIVE ASPECTS - List positive educational or entertaining moments WITH timestamps in MM:SS format. Format: "Description at 2:35"
+POSITIVE ASPECTS - IMPORTANT: ALWAYS include timestamps! List positive educational or entertaining moments WITH timestamps in MM:SS format. Format: "Description at 2:35"
 Example: "Teaches sharing at 1:45", "Beautiful music at 3:20"
+You can list up to 10 positive aspects.
 
-KEY MOMENTS - Identify 3-5 key moments with timestamps (both concerns AND positive moments):
+KEY MOMENTS - Identify 5-10 key moments with timestamps (both concerns AND positive moments):
 - timestamp_seconds: The exact time in seconds from the start of the video
 - timestamp_display: The timestamp in MM:SS format (e.g., "2:35" for 2 minutes 35 seconds)
 - type: The category (violence, scary, nsfw, profanity, educational, positive)
@@ -581,8 +583,8 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
                 "scary_score": {"type": "integer", "minimum": 0, "maximum": 100},
                 "profanity_detected": {"type": "boolean"},
                 "themes": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
-                "concerns": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 3},
-                "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 3},
+                "concerns": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
+                "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
                 "summary": {"type": "string", "maxLength": 300},
                 "explanation": {"type": "string", "maxLength": 300},
                 "recommendations": {"type": "string", "maxLength": 200},
@@ -599,7 +601,7 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
                         },
                         "required": ["timestamp_seconds", "timestamp_display", "type", "description", "severity"]
                     },
-                    "maxItems": 5
+                    "maxItems": 10
                 }
             },
             "required": ["safety_score", "violence_score", "nsfw_score", "scary_score",
