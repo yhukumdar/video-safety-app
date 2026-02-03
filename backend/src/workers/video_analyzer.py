@@ -441,12 +441,28 @@ def merge_chunk_results(chunk_results):
         all_positive.extend(chunk.get('positive_aspects', []))
         all_key_moments.extend(chunk.get('key_moments', []))
 
-    # Deduplicate concerns/positive
-    unique_concerns = list(set(all_concerns))[:5]  # Keep top 5
-    unique_positive = list(set(all_positive))[:5]
+    # Extract timestamps from concerns/positive and sort them chronologically
+    def extract_timestamp(text):
+        """Extract timestamp in seconds from text like 'Something at 2:35'"""
+        import re
+        match = re.search(r'at (\d+):(\d+)', text)
+        if match:
+            minutes = int(match.group(1))
+            seconds = int(match.group(2))
+            return minutes * 60 + seconds
+        return 0
+
+    # Sort concerns and positive by timestamp, keep all (not just 5)
+    sorted_concerns = sorted(all_concerns, key=extract_timestamp)[:10]  # Keep top 10
+    sorted_positive = sorted(all_positive, key=extract_timestamp)[:10]  # Keep top 10
 
     # Sort key moments by timestamp and keep top 10
     sorted_key_moments = sorted(all_key_moments, key=lambda m: m.get('timestamp_seconds', 0))[:10]
+
+    # Create summary from first chunk (without generic message)
+    summary = chunk_results[0].get('summary', 'Video analyzed in multiple parts') if chunk_results else 'Video analyzed'
+    if 'Video content analyzed' in summary or len(summary) < 10:
+        summary = f'Long video analyzed in {len(chunk_results)} parts - see concerns and positive aspects with timestamps below'
 
     return {
         'safety_score': int(avg_safety),
@@ -455,9 +471,9 @@ def merge_chunk_results(chunk_results):
         'scary_score': max_scary,
         'profanity_detected': any_profanity,
         'themes': list(all_themes),
-        'concerns': unique_concerns,
-        'positive_aspects': unique_positive,
-        'summary': f'Video analyzed in {len(chunk_results)} chunks',
+        'concerns': sorted_concerns,
+        'positive_aspects': sorted_positive,
+        'summary': summary,
         'explanation': f'Max violence: {max_violence}, NSFW: {max_nsfw}, Scary: {max_scary}',
         'recommendations': 'Review all concerns carefully for long videos',
         'key_moments': sorted_key_moments
@@ -639,25 +655,64 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
             print(f"   ✅ JSON parsed successfully")
         except json.JSONDecodeError as e:
             print(f"   ❌ JSON Parse Error: {str(e)}")
-            print(f"   📄 Full response: {response.text}")
+            print(f"   📄 Response preview (first 1000 chars): {response.text[:1000]}")
 
             # Try to fix common JSON issues
             import re
             cleaned_text = response.text
 
-            # Remove trailing commas before closing braces/brackets
+            # Fix 1: Remove trailing commas before closing braces/brackets
             cleaned_text = re.sub(r',(\s*[}\]])', r'\1', cleaned_text)
 
-            # Try to find and extract the main JSON object
-            json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
-            if json_match:
+            # Fix 2: Fix unterminated strings by completing them
+            # Find incomplete strings and add closing quote
+            lines = cleaned_text.split('\n')
+            fixed_lines = []
+            for line in lines:
+                # If line has odd number of quotes (unterminated string), close it
+                if line.count('"') % 2 != 0 and not line.strip().endswith('"'):
+                    line = line.rstrip() + '"'
+                fixed_lines.append(line)
+            cleaned_text = '\n'.join(fixed_lines)
+
+            # Fix 3: Remove any text after the last closing brace
+            last_brace = cleaned_text.rfind('}')
+            if last_brace > 0:
+                cleaned_text = cleaned_text[:last_brace+1]
+
+            # Try to parse cleaned JSON
+            try:
+                result = json.loads(cleaned_text)
+                print(f"   ✅ Extracted JSON successfully after cleaning")
+            except Exception as clean_error:
+                print(f"   ❌ Cleaning failed: {str(clean_error)}")
+                # Last resort: Try to extract just the scores using regex
                 try:
-                    result = json.loads(json_match.group())
-                    print(f"   ✅ Extracted JSON successfully after cleaning")
-                except Exception as clean_error:
-                    print(f"   ❌ Cleaning failed: {str(clean_error)}")
+                    violence = re.search(r'"violence_score":\s*(\d+)', response.text)
+                    nsfw = re.search(r'"nsfw_score":\s*(\d+)', response.text)
+                    scary = re.search(r'"scary_score":\s*(\d+)', response.text)
+                    safety = re.search(r'"safety_score":\s*(\d+)', response.text)
+                    profanity = re.search(r'"profanity_detected":\s*(true|false)', response.text)
+
+                    if violence and nsfw and scary and safety:
+                        print(f"   ⚠️  Extracted partial data from malformed JSON")
+                        result = {
+                            "safety_score": int(safety.group(1)),
+                            "violence_score": int(violence.group(1)),
+                            "nsfw_score": int(nsfw.group(1)),
+                            "scary_score": int(scary.group(1)),
+                            "profanity_detected": profanity.group(1) == 'true' if profanity else False,
+                            "themes": [],
+                            "concerns": ["Analysis completed but some details may be missing due to API response error"],
+                            "positive_aspects": [],
+                            "summary": "Video analyzed - see safety scores above",
+                            "key_moments": []
+                        }
+                    else:
+                        raise Exception("Could not extract even basic scores")
+                except:
                     # Return safe defaults if all parsing fails
-                    print(f"   ⚠️  Using safe default values due to parse failure")
+                    print(f"   ⚠️  Using safe default values - all parsing methods failed")
                     result = {
                         "safety_score": 50,
                         "violence_score": 0,
@@ -665,25 +720,11 @@ Be accurate and thorough. Report specific safety concerns and positive aspects y
                         "scary_score": 0,
                         "profanity_detected": False,
                         "themes": [],
-                        "concerns": ["Unable to fully analyze - using safe defaults"],
+                        "concerns": ["Unable to fully analyze - API response error"],
                         "positive_aspects": [],
-                        "summary": "Analysis incomplete due to API response error",
+                        "summary": "Analysis incomplete due to technical error",
                         "key_moments": []
                     }
-            else:
-                print(f"   ⚠️  No JSON found, using safe defaults")
-                result = {
-                    "safety_score": 50,
-                    "violence_score": 0,
-                    "nsfw_score": 0,
-                    "scary_score": 0,
-                    "profanity_detected": False,
-                    "themes": [],
-                    "concerns": ["Unable to analyze - API error"],
-                    "positive_aspects": [],
-                    "summary": "Analysis failed",
-                    "key_moments": []
-                }
 
         # Extract and validate scores
         safety_score = max(0, min(100, int(result.get('safety_score', 50))))
