@@ -285,11 +285,23 @@ educational, entertainment, religious, lgbtq, political, scary, romantic, action
 
 SUMMARY - Provide a brief overview of this chunk WITHOUT timestamps. Just describe what happens in this part.
 
-CONCERNS - List specific safety concerns WITH timestamps in MM:SS format from the START OF THE FULL VIDEO. Format: "Description at 2:35"
-Example: If violence happens 35 seconds into this chunk, report it as "Violence at {(chunk_start_time + 35)//60}:{(chunk_start_time + 35)%60:02d}"
+CONCERNS - CRITICAL REQUIREMENT: EVERY concern MUST have a timestamp in "at MM:SS" format FROM THE START OF THE FULL VIDEO!
+Format EXACTLY: "Description at MM:SS"
+Example: If violence happens 35 seconds into THIS chunk, report: "Violence at {(chunk_start_time + 35)//60}:{(chunk_start_time + 35)%60:02d}"
 
-POSITIVE ASPECTS - List positive moments WITH timestamps in MM:SS format from the START OF THE FULL VIDEO. Format: "Description at 2:35"
-Example: If teaching moment happens 20 seconds into this chunk, report it as "Teaches lesson at {(chunk_start_time + 20)//60}:{(chunk_start_time + 20)%60:02d}"
+WRONG: "Character uses violent language"
+CORRECT: "Character uses violent language at {chunk_start_time//60}:{chunk_start_time%60:02d}"
+
+List up to 10 concerns. EVERY SINGLE ONE must have " at MM:SS" in it!
+
+POSITIVE ASPECTS - CRITICAL REQUIREMENT: EVERY positive aspect MUST have a timestamp in "at MM:SS" format FROM THE START OF THE FULL VIDEO!
+Format EXACTLY: "Description at MM:SS"
+Example: If teaching moment happens 20 seconds into THIS chunk, report: "Teaches lesson at {(chunk_start_time + 20)//60}:{(chunk_start_time + 20)%60:02d}"
+
+WRONG: "Educational content about animals"
+CORRECT: "Educational content about animals at {chunk_start_time//60}:{chunk_start_time%60:02d}"
+
+List up to 10 positive aspects. EVERY SINGLE ONE must have " at MM:SS" in it!
 
 KEY MOMENTS - Identify key moments with timestamps (both concerns AND positive moments):
 - timestamp_seconds: The exact time in seconds from the START OF THE FULL VIDEO (add {chunk_start_time} to the time within this chunk)
@@ -300,7 +312,7 @@ KEY MOMENTS - Identify key moments with timestamps (both concerns AND positive m
 
 For example, if you see violence at 35 seconds into THIS CHUNK, the full video timestamp is {chunk_start_time} + 35 = {chunk_start_time + 35} seconds.
 
-Be accurate and thorough. Report specific safety concerns and positive aspects you observe."""
+REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every item MUST have " at MM:SS" format!"""
 
             # Response schema for chunks (same as direct analysis)
             chunk_schema = {
@@ -554,13 +566,33 @@ educational, entertainment, religious, lgbtq, political, scary, romantic, action
 
 SUMMARY - Provide a brief overview of the video WITHOUT timestamps. Just describe what the video is about.
 
-CONCERNS - IMPORTANT: ALWAYS include timestamps! List specific safety concerns WITH timestamps in MM:SS format. Format: "Description at 2:35" or "Issue happens at 10:20"
-Example: "Character uses violent language at 2:35", "Scary monster appears at 5:12"
-You can list up to 10 concerns.
+CONCERNS - CRITICAL REQUIREMENT: EVERY concern MUST have a timestamp in "at MM:SS" format!
+Format EXACTLY like this: "Description at 2:35"
+WRONG: "Slapstick moments where characters almost crash"
+CORRECT: "Slapstick moments at 2:35"
+WRONG: "Child is scared by facial expressions"
+CORRECT: "Child scared by facial expressions at 5:12"
 
-POSITIVE ASPECTS - IMPORTANT: ALWAYS include timestamps! List positive educational or entertaining moments WITH timestamps in MM:SS format. Format: "Description at 2:35"
-Example: "Teaches sharing at 1:45", "Beautiful music at 3:20"
-You can list up to 10 positive aspects.
+Examples:
+- "Character uses violent language at 2:35"
+- "Scary monster appears at 5:12"
+- "Inappropriate joke at 8:20"
+
+List up to 10 concerns. EVERY SINGLE ONE must have " at MM:SS" in it!
+
+POSITIVE ASPECTS - CRITICAL REQUIREMENT: EVERY positive aspect MUST have a timestamp in "at MM:SS" format!
+Format EXACTLY like this: "Description at 2:35"
+WRONG: "Highlights the importance of helping others"
+CORRECT: "Highlights helping others at 3:45"
+WRONG: "Strong themes of courage"
+CORRECT: "Shows courage at 7:20"
+
+Examples:
+- "Teaches sharing at 1:45"
+- "Beautiful music at 3:20"
+- "Educational fact at 9:10"
+
+List up to 10 positive aspects. EVERY SINGLE ONE must have " at MM:SS" in it!
 
 KEY MOMENTS - Identify 5-10 key moments with timestamps (both concerns AND positive moments):
 - timestamp_seconds: The exact time in seconds from the start of the video
@@ -571,7 +603,7 @@ KEY MOMENTS - Identify 5-10 key moments with timestamps (both concerns AND posit
 
 For example, if you see violence at 155 seconds (2:35), record: timestamp_seconds=155, timestamp_display="2:35", type="violence", description="Character hits another with hammer", severity="moderate"
 
-Be accurate and thorough. Report specific safety concerns and positive aspects you observe."""
+REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every item MUST have " at MM:SS" format!"""
 
         # Response schema with maximum safe limits (tested to prevent truncation)
         response_schema = {
