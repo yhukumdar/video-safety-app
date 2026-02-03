@@ -91,11 +91,12 @@ Merge results → Done ✅
 | Scenario | Tier 1 Success | Tier 2 Needed | Tier 3 Needed |
 |----------|---------------|---------------|---------------|
 | Normal videos (<30min) | 99.9% | 0.1% | <0.01% |
-| Long videos (30+ min) | 95% | 5% | <0.01% |
+| Long videos (30+ min, fresh cookies) | 95% | 5% | <0.01% |
+| Long videos (30+ min, expired cookies) | 0% | 0% | 100% (fails) |
 | YouTube API down | 0% | 99.9% | 0.1% |
-| Cookies expired | 99.9%* | 0% | 0.1% |
+| Cookies expired (short videos) | 99.9%* | 0% | 0% |
 
-*Cookies only affect long video downloads, not metadata
+*Cookies only affect long video downloads, not metadata or short videos
 
 ---
 
@@ -105,19 +106,21 @@ Merge results → Done ✅
 - ✅ YouTube Data API key (unless manually revoked)
 - ✅ Gemini API key (unless manually revoked)
 
-### Periodic Maintenance (6-12 months)
+### Periodic Maintenance (1-3 months)
 - ⚠️ Refresh `cookies.txt` when:
-  - Long videos (30+ min) start failing to download
-  - See error: "ERROR: The downloaded file is empty"
+  - Long videos (30+ min) fail with: "Sign in to confirm you're not a bot"
+  - See error: "The provided YouTube account cookies are no longer valid"
 
 ### How to Refresh cookies.txt:
 1. Install browser extension: "Get cookies.txt LOCALLY"
-2. Go to youtube.com (logged in)
+2. Go to youtube.com (must be **logged in**!)
 3. Click extension → Export cookies.txt
 4. Replace `backend/cookies.txt`
-5. Redeploy: `gcloud run deploy video-safety-backend --source . --region us-central1 --clear-base-image`
+5. Redeploy: `gcloud run deploy video-safety-backend --source . --region us-central1 --timeout=600 --clear-base-image`
 
-**⏰ Expected refresh frequency:** Once every 6-12 months
+**⏰ Expected refresh frequency:** Every 1-3 months (YouTube rotates cookies for security)
+
+**📖 See:** `backend/COOKIES_REFRESH_GUIDE.md` for detailed instructions
 
 ---
 
@@ -225,4 +228,4 @@ WARNING: YouTube is forcing SABR streaming
 
 ---
 
-**Bottom Line:** This architecture is designed for **99.9% uptime with minimal maintenance**. The only manual task is refreshing cookies.txt once or twice per year, and that's only needed for long videos (rare use case).
+**Bottom Line:** This architecture is designed for **99.9% uptime with minimal maintenance**. The only manual task is refreshing cookies.txt every 1-3 months, and that's only needed for long videos (rare use case - most videos are under 30 minutes).
