@@ -178,12 +178,15 @@ def retry_with_backoff(max_retries=4, base_delay=3):
                 except Exception as e:
                     error_str = str(e)
                     
-                    # Check if it's a retryable error (503, overloaded, rate limit)
+                    # Check if it's a retryable error (500/503, overloaded, rate limit, internal)
                     is_retryable = (
-                        '503' in error_str or 
+                        '503' in error_str or
+                        '500' in error_str or
+                        'INTERNAL' in error_str or
                         'overloaded' in error_str.lower() or
                         'rate limit' in error_str.lower() or
-                        'quota' in error_str.lower()
+                        'quota' in error_str.lower() or
+                        'internal error' in error_str.lower()
                     )
                     
                     if is_retryable and attempt < max_retries - 1:
@@ -324,8 +327,8 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
                     "scary_score": {"type": "integer", "minimum": 0, "maximum": 100},
                     "profanity_detected": {"type": "boolean"},
                     "themes": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
-                    "concerns": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 3},
-                    "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 3},
+                    "concerns": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
+                    "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
                     "summary": {"type": "string", "maxLength": 300},
                     "explanation": {"type": "string", "maxLength": 300},
                     "recommendations": {"type": "string", "maxLength": 200},
@@ -342,7 +345,7 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
                             },
                             "required": ["timestamp_seconds", "timestamp_display", "type", "description", "severity"]
                         },
-                        "maxItems": 5
+                        "maxItems": 10
                     }
                 },
                 "required": ["safety_score", "violence_score", "nsfw_score", "scary_score",
@@ -401,13 +404,20 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
         print(f"   📊 Safety: {merged_result['safety_score']}/100")
 
     except Exception as e:
-        print(f"   ❌ Chunked analysis failed: {str(e)}")
+        error_str = str(e)
+        print(f"   ❌ Chunked analysis failed: {error_str}")
         import traceback
         traceback.print_exc()
 
+        # If download failed (cookies expired), re-raise so caller can try direct analysis
+        if 'download' in error_str.lower() or 'cookies' in error_str.lower():
+            print(f"   🔄 Re-raising download error for direct analysis fallback...")
+            raise
+
+        # For other errors (chunk analysis failures), mark as failed
         service_supabase_client.table('reports').update({
             'status': 'failed',
-            'error_message': str(e)
+            'error_message': error_str
         }).eq('id', report_id).execute()
 
     finally:
@@ -533,9 +543,21 @@ def analyze_video(report_id, youtube_url):
             # Use chunking for videos longer than MAX_DURATION_FOR_FULL_ANALYSIS
             if duration_seconds > MAX_DURATION_FOR_FULL_ANALYSIS:
                 num_chunks = (duration_seconds // CHUNK_DURATION_SECONDS) + 1
-                print(f"   🔄 Video exceeds {MAX_DURATION_FOR_FULL_ANALYSIS/60:.0f} minutes - using chunked analysis")
+                print(f"   🔄 Video exceeds {MAX_DURATION_FOR_FULL_ANALYSIS/60:.0f} minutes - trying chunked analysis first")
                 print(f"   ✂️  Will split into {num_chunks} chunks of {CHUNK_DURATION_SECONDS/60:.0f} minutes each")
-                return analyze_video_chunked(report_id, youtube_url, duration_seconds)
+                try:
+                    return analyze_video_chunked(report_id, youtube_url, duration_seconds)
+                except Exception as chunked_error:
+                    # If chunked fails (e.g., cookie expired), fall back to direct Gemini analysis
+                    # Gemini can sometimes handle videos >60min directly via URL
+                    print(f"   ⚠️  Chunked analysis failed: {str(chunked_error)}")
+                    print(f"   🔄 Falling back to direct Gemini analysis (may work for videos up to ~2hrs)...")
+                    # Reset status to processing for the direct analysis attempt
+                    service_supabase_client.table('reports').update({
+                        'status': 'processing',
+                        'error_message': None
+                    }).eq('id', report_id).execute()
+                    # Continue to direct analysis below
         else:
             print(f"   ⚠️  Duration detection failed - will try direct analysis first")
 
@@ -817,6 +839,15 @@ def process_pending_reports():
     try:
         print(f"   🔍 Querying database for pending reports...")
         print(f"   🔗 Supabase URL: {service_supabase_client.supabase_url}")
+
+        # Reset stale 'processing' reports (stuck >15 min) back to 'pending'
+        stale_cutoff = (datetime.now() - timedelta(minutes=15)).isoformat()
+        stale_result = service_supabase_client.table('reports').update({
+            'status': 'pending',
+            'error_message': 'Reset: was stuck in processing for >15 min'
+        }).eq('status', 'processing').lt('updated_at', stale_cutoff).execute()
+        if stale_result.data:
+            print(f"   🔄 Reset {len(stale_result.data)} stale processing report(s) to pending")
 
         # Query pending reports
         result = service_supabase_client.table('reports').select('*').eq('status', 'pending').execute()

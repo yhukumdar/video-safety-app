@@ -200,8 +200,38 @@ export default function Dashboard() {
     }))
   }
 
+  // Retry a failed report
+  const handleRetryReport = async (reportId) => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/retry/${reportId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        setError(errorData.detail || 'Failed to retry')
+        return
+      }
+
+      // Optimistically update the report status in state
+      setReports(prev => prev.map(r =>
+        r.id === reportId ? { ...r, status: 'pending', error_message: null } : r
+      ))
+
+      // Refresh reports after a short delay
+      setTimeout(() => fetchReports(), 2000)
+    } catch (err) {
+      console.error('Retry error:', err)
+      setError('Failed to retry. Please try again.')
+    }
+  }
+
   // Helper to parse and linkify timestamps in text
   const linkifyTimestamps = (text, videoUrl) => {
+    if (!text) return ''
+    if (!videoUrl) return text  // Null-safe: return plain text if no video URL
+
     // Match timestamps like "2:30", "12:45", "1:23:45" or "at 150 seconds"
     const timestampRegex = /(\d{1,2}):(\d{2})(?::(\d{2}))?|at (\d+) seconds?/g
     const parts = []
@@ -1145,9 +1175,15 @@ export default function Dashboard() {
                             <p className="text-red-400 text-sm font-medium">Analysis failed</p>
                             {report.error_message && (
                               <p className="text-xs text-red-300 mt-2 max-w-md mx-auto">
-                                {report.error_message}
+                                {report.error_message.length > 120 ? report.error_message.substring(0, 120) + '...' : report.error_message}
                               </p>
                             )}
+                            <button
+                              onClick={() => handleRetryReport(report.id)}
+                              className="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-medium text-white transition-all"
+                            >
+                              Retry Analysis
+                            </button>
                           </div>
                         )}
 

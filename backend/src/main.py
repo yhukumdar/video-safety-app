@@ -80,14 +80,15 @@ class CreateTaskResponse(BaseModel):
 
 
 @app.get("/")
-async def health_check():
-    """
-    Health check endpoint.
-    
-    Returns:
-        dict: Status and message indicating the API is running
-    """
+async def root():
+    """Root endpoint."""
     return {"status": "ok", "message": "Video Safety API"}
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Cloud Run."""
+    return {"status": "ok", "message": "Video Safety API is healthy"}
 
 
 @app.post("/api/upload/signed-url")
@@ -357,6 +358,38 @@ async def analyze_video(request: AnalyzeRequest):
     except Exception as e:
         print(f"Error creating report: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@app.post("/api/retry/{report_id}")
+async def retry_failed_report(report_id: str):
+    """
+    Retry a failed report by resetting its status back to 'pending'.
+    The Cloud Scheduler will pick it up automatically within 60 seconds.
+    """
+    try:
+        # Verify report exists and is failed
+        result = service_supabase_client.table('reports').select('id,status,video_url').eq('id', report_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Report not found")
+
+        report = result.data[0]
+        if report['status'] != 'failed':
+            raise HTTPException(status_code=400, detail=f"Report is not in failed state (current: {report['status']})")
+
+        # Reset to pending so worker picks it up
+        service_supabase_client.table('reports').update({
+            'status': 'pending',
+            'error_message': None
+        }).eq('id', report_id).execute()
+
+        print(f"✅ Report {report_id} reset to pending for retry")
+        return {"status": "success", "message": "Report queued for retry", "report_id": report_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Retry error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Retry failed: {str(e)}")
 
 
 @app.post("/worker/process-pending")
