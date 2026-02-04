@@ -685,7 +685,7 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
                     temperature=0.1,
                     top_p=0.7,
                     top_k=20,
-                    max_output_tokens=4096,  # Increased to prevent truncation
+                    max_output_tokens=8192,  # Long videos need more tokens for concerns/positive arrays
                     media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
                     response_mime_type="application/json",
                     response_schema=response_schema
@@ -713,6 +713,25 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
             print(f"   ❌ JSON Parse Error: {str(e)}")
             print(f"   📄 Response preview (first 1000 chars): {response.text[:1000]}")
 
+            # Helper: extract a string array from malformed JSON text
+            def extract_string_array(text, key):
+                """Extract ["str1", "str2", ...] for a given key from malformed JSON"""
+                pattern = rf'"{key}"\s*:\s*\['
+                match = re.search(pattern, text)
+                if not match:
+                    return []
+                start = match.end()
+                # Find matching closing bracket
+                depth = 1
+                pos = start
+                while pos < len(text) and depth > 0:
+                    if text[pos] == '[': depth += 1
+                    elif text[pos] == ']': depth -= 1
+                    pos += 1
+                array_text = text[start:pos-1] if depth == 0 else text[start:]
+                # Extract all quoted strings (handles escaped quotes)
+                return re.findall(r'"((?:[^"\\]|\\.)*)"', array_text)
+
             # Try to fix common JSON issues
             import re
             cleaned_text = response.text
@@ -720,18 +739,20 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
             # Fix 1: Remove trailing commas before closing braces/brackets
             cleaned_text = re.sub(r',(\s*[}\]])', r'\1', cleaned_text)
 
-            # Fix 2: Fix unterminated strings by completing them
-            # Find incomplete strings and add closing quote
+            # Fix 2: Add missing commas between consecutive string elements
+            # Matches: "string"  \n  "string" (missing comma between)
+            cleaned_text = re.sub(r'"(\s*\n\s*)"', r'",\1"', cleaned_text)
+
+            # Fix 3: Fix unterminated strings by completing them
             lines = cleaned_text.split('\n')
             fixed_lines = []
             for line in lines:
-                # If line has odd number of quotes (unterminated string), close it
                 if line.count('"') % 2 != 0 and not line.strip().endswith('"'):
                     line = line.rstrip() + '"'
                 fixed_lines.append(line)
             cleaned_text = '\n'.join(fixed_lines)
 
-            # Fix 3: Remove any text after the last closing brace
+            # Fix 4: Remove any text after the last closing brace
             last_brace = cleaned_text.rfind('}')
             if last_brace > 0:
                 cleaned_text = cleaned_text[:last_brace+1]
@@ -742,33 +763,45 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
                 print(f"   ✅ Extracted JSON successfully after cleaning")
             except Exception as clean_error:
                 print(f"   ❌ Cleaning failed: {str(clean_error)}")
-                # Last resort: Try to extract just the scores using regex
+                # Extract ALL available data from malformed JSON using regex
                 try:
                     violence = re.search(r'"violence_score":\s*(\d+)', response.text)
                     nsfw = re.search(r'"nsfw_score":\s*(\d+)', response.text)
                     scary = re.search(r'"scary_score":\s*(\d+)', response.text)
                     safety = re.search(r'"safety_score":\s*(\d+)', response.text)
                     profanity = re.search(r'"profanity_detected":\s*(true|false)', response.text)
+                    summary_match = re.search(r'"summary":\s*"((?:[^"\\]|\\.)*)"', response.text)
+
+                    # Extract concerns and positive_aspects arrays (WITH timestamps)
+                    concerns = extract_string_array(response.text, 'concerns')
+                    positive_aspects = extract_string_array(response.text, 'positive_aspects')
+                    themes = extract_string_array(response.text, 'themes')
+
+                    print(f"   📊 Regex extracted: {len(concerns)} concerns, {len(positive_aspects)} positives, {len(themes)} themes")
+
+                    if not concerns:
+                        concerns = ["See safety scores above for content assessment"]
+                    if not positive_aspects:
+                        positive_aspects = []
 
                     if violence and nsfw and scary and safety:
-                        print(f"   ⚠️  Extracted partial data from malformed JSON")
+                        print(f"   ✅ Extracted full data from malformed JSON via regex")
                         result = {
                             "safety_score": int(safety.group(1)),
                             "violence_score": int(violence.group(1)),
                             "nsfw_score": int(nsfw.group(1)),
                             "scary_score": int(scary.group(1)),
                             "profanity_detected": profanity.group(1) == 'true' if profanity else False,
-                            "themes": [],
-                            "concerns": ["Analysis completed but some details may be missing due to API response error"],
-                            "positive_aspects": [],
-                            "summary": "Video analyzed - see safety scores above",
+                            "themes": themes,
+                            "concerns": concerns,
+                            "positive_aspects": positive_aspects,
+                            "summary": summary_match.group(1) if summary_match else "Video analyzed - see details below",
                             "key_moments": []
                         }
                     else:
                         raise Exception("Could not extract even basic scores")
-                except:
-                    # Return safe defaults if all parsing fails
-                    print(f"   ⚠️  Using safe default values - all parsing methods failed")
+                except Exception as extract_err:
+                    print(f"   ⚠️  Regex extraction error: {str(extract_err)}")
                     result = {
                         "safety_score": 50,
                         "violence_score": 0,
