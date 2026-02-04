@@ -474,9 +474,9 @@ def merge_chunk_results(chunk_results):
             return minutes * 60 + seconds
         return 0
 
-    # Sort concerns and positive by timestamp, keep all (not just 5)
-    sorted_concerns = sorted(all_concerns, key=extract_timestamp)[:10]  # Keep top 10
-    sorted_positive = sorted(all_positive, key=extract_timestamp)[:10]  # Keep top 10
+    # Sort concerns and positive by timestamp, deduplicate, and limit
+    sorted_concerns = deduplicate_and_clean(sorted(all_concerns, key=extract_timestamp))[:10]
+    sorted_positive = deduplicate_and_clean(sorted(all_positive, key=extract_timestamp))[:10]
 
     # Sort key moments by timestamp and keep top 10
     sorted_key_moments = sorted(all_key_moments, key=lambda m: m.get('timestamp_seconds', 0))[:10]
@@ -500,6 +500,52 @@ def merge_chunk_results(chunk_results):
         'recommendations': 'Review all concerns carefully for long videos',
         'key_moments': sorted_key_moments
     }
+
+
+def deduplicate_and_clean(items):
+    """
+    Remove duplicate and truncated concerns/positive_aspects.
+    - Strips timestamps and deduplicates by description text
+    - Removes truncated items (too short or missing timestamp)
+    """
+    if not items:
+        return items
+
+    timestamp_pattern = re.compile(r'\s*at\s+\d{1,2}:\d{2}(?::\d{2})?\s*$')
+    has_timestamp_pattern = re.compile(r'at\s+\d{1,2}:\d{2}')
+
+    seen_descriptions = set()
+    cleaned = []
+
+    for item in items:
+        if not item or not isinstance(item, str):
+            continue
+
+        item = item.strip()
+
+        # Remove truncated items (too short to be meaningful)
+        if len(item) < 20:
+            continue
+
+        # Must contain a timestamp to be useful (clickable)
+        if not has_timestamp_pattern.search(item):
+            continue
+
+        # Extract description without timestamp for dedup comparison
+        desc = timestamp_pattern.sub('', item).strip().lower()
+
+        # Skip if description is too short after stripping timestamp
+        if len(desc) < 10:
+            continue
+
+        # Skip duplicate descriptions (same event, different timestamps)
+        if desc in seen_descriptions:
+            continue
+
+        seen_descriptions.add(desc)
+        cleaned.append(item)
+
+    return cleaned
 
 
 def calculate_age_recommendation(violence_score, scary_score, nsfw_score, profanity):
@@ -804,7 +850,12 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
         result.setdefault('themes', [])
         result.setdefault('concerns', [])
         result.setdefault('positive_aspects', [])
-        result.setdefault('timestamps', [])
+        result.setdefault('key_moments', [])
+
+        # Deduplicate and remove truncated items from concerns/positive
+        result['concerns'] = deduplicate_and_clean(result['concerns'])
+        result['positive_aspects'] = deduplicate_and_clean(result['positive_aspects'])
+        print(f"   📊 After dedup: {len(result['concerns'])} concerns, {len(result['positive_aspects'])} positives")
 
         # Calculate age recommendation
         age_recommendation = calculate_age_recommendation(
