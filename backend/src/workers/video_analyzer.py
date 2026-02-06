@@ -8,22 +8,185 @@ import os
 import sys
 import json
 import time
-import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
+from typing import List, Literal
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import service_supabase_client, GEMINI_API_KEY, YOUTUBE_API_KEY
 
-# NEW SDK imports
+# Gemini SDK imports
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
 import requests
 import re
-from datetime import timedelta
+from pydantic import BaseModel
+from json_repair import repair_json
+
+# --- Pydantic models for Gemini structured output ---
+# Passing these as response_schema lets the SDK serialize the schema correctly
+# AND makes response.parsed available (returns validated model, no manual JSON parsing).
+
+class ConcernItem(BaseModel):
+    description: str
+    timestamp: str
+
+class PositiveItem(BaseModel):
+    description: str
+    timestamp: str
+
+class KeyMoment(BaseModel):
+    timestamp_seconds: int
+    timestamp_display: str
+    type: Literal['violence', 'scary', 'nsfw', 'profanity', 'educational', 'positive']
+    description: str
+    severity: Literal['low', 'moderate', 'high']
+
+class VideoAnalysisResult(BaseModel):
+    safety_score: int
+    violence_score: int
+    nsfw_score: int
+    scary_score: int
+    profanity_detected: bool
+    themes: List[str]
+    concerns: List[ConcernItem]
+    positive_aspects: List[PositiveItem]
+    summary: str
+    explanation: str
+    recommendations: str
+    key_moments: List[KeyMoment]
+
+
+# --- Dict schema for response_schema (NOT the Pydantic class) ---
+# Using a dict here is intentional: when response_schema is a Pydantic class the SDK
+# attempts to validate the response inside generate_content() and raises JSONDecodeError
+# on truncated/malformed responses BEFORE returning a response object.  A plain dict
+# tells the API the same shape but lets the SDK return response.text as-is so json_repair
+# can fix any drift.  See STABILITY_ARCHITECTURE.md for details on "JSON drift".
+ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "safety_score":        {"type": "integer"},
+        "violence_score":      {"type": "integer"},
+        "nsfw_score":          {"type": "integer"},
+        "scary_score":         {"type": "integer"},
+        "profanity_detected":  {"type": "boolean"},
+        "themes":              {"type": "array", "items": {"type": "string"}},
+        "concerns": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string"},
+                    "timestamp":   {"type": "string"}
+                },
+                "required": ["description", "timestamp"]
+            }
+        },
+        "positive_aspects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string"},
+                    "timestamp":   {"type": "string"}
+                },
+                "required": ["description", "timestamp"]
+            }
+        },
+        "summary":         {"type": "string"},
+        "explanation":     {"type": "string"},
+        "recommendations": {"type": "string"},
+        "key_moments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "timestamp_seconds": {"type": "integer"},
+                    "timestamp_display": {"type": "string"},
+                    "type":              {"type": "string", "enum": ["violence", "scary", "nsfw", "profanity", "educational", "positive"]},
+                    "description":       {"type": "string"},
+                    "severity":          {"type": "string", "enum": ["low", "moderate", "high"]}
+                },
+                "required": ["timestamp_seconds", "timestamp_display", "type", "description", "severity"]
+            }
+        }
+    },
+    "required": [
+        "safety_score", "violence_score", "nsfw_score", "scary_score",
+        "profanity_detected", "themes", "concerns", "positive_aspects",
+        "summary", "explanation", "recommendations", "key_moments"
+    ]
+}
+
+_SAFE_DEFAULT = {
+    "safety_score": 50, "violence_score": 0, "nsfw_score": 0,
+    "scary_score": 0, "profanity_detected": False, "themes": [],
+    "concerns": [], "positive_aspects": [],
+    "summary": "Video was analyzed but detailed results could not be extracted.",
+    "explanation": "Please review the video manually for a detailed assessment.",
+    "recommendations": "Manual review recommended.",
+    "key_moments": []
+}
+
+
+def _repair_text(text):
+    """Strip markdown fences and run json_repair.  Returns a dict or None."""
+    if not text:
+        return None
+    text = text.strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```(?:json)?\s*\n?', '', text)
+        text = re.sub(r'\n?```\s*$', '', text)
+    try:
+        result = repair_json(text, return_objects=True)
+        if isinstance(result, dict):
+            return result
+    except Exception as e:
+        print(f"   ⚠️  json_repair failed: {e}")
+    return None
+
+
+def parse_gemini_response(response):
+    """
+    Parse a Gemini response.  Never raises — always returns a valid dict.
+
+    With a dict response_schema the SDK does NOT eagerly validate, so
+    response.text contains the raw (possibly drifted) JSON and json_repair
+    fixes it.  response.parsed is tried first as an optimistic fast-path
+    (works when the JSON happened to be valid).
+    """
+    # 1. Optimistic: response.parsed (works when JSON is valid)
+    try:
+        if hasattr(response, 'parsed') and response.parsed is not None:
+            parsed = response.parsed
+            if isinstance(parsed, dict):
+                print(f"   ✅ Parsed via response.parsed")
+                return parsed
+            if hasattr(parsed, 'model_dump'):
+                print(f"   ✅ Parsed via response.parsed (Pydantic)")
+                return parsed.model_dump()
+    except Exception as e:
+        print(f"   ⚠️  response.parsed failed: {e}")
+
+    # 2. json_repair on response.text (handles drift: trailing commas,
+    #    unterminated strings, truncation, markdown fences)
+    try:
+        text = response.text if hasattr(response, 'text') else str(response)
+        result = _repair_text(text)
+        if result:
+            print(f"   ✅ Parsed via json_repair")
+            return result
+    except Exception as e:
+        print(f"   ⚠️  response.text extraction failed: {e}")
+
+    # 3. Safe default — analysis "succeeds" with empty data; user never sees an error
+    print(f"   ⚠️  Using safe default result (both parse paths failed)")
+    return dict(_SAFE_DEFAULT)
+
 
 # Create Gemini client with v1alpha for media_resolution support
 client = genai.Client(
@@ -35,8 +198,11 @@ client = genai.Client(
 MODEL_NAME = 'gemini-2.5-flash'
 
 # Configurable constants
-MAX_DURATION_FOR_FULL_ANALYSIS = 60 * 60  # 60 minutes in seconds - use chunking if video is longer (try direct analysis for most videos to avoid cookie dependency)
-CHUNK_DURATION_SECONDS = 10 * 60  # 10 minutes per chunk (optimal balance of detail vs API calls)
+# Gemini analyzes YouTube URLs directly (no download).
+# For videos longer than 30 minutes, we use timestamp-based chunking:
+# multiple Gemini calls with the same URL, each focusing on a time segment.
+MAX_DURATION_FOR_FULL_ANALYSIS = 30 * 60  # 30 minutes
+CHUNK_DURATION_SECONDS = 20 * 60  # 20 minutes per chunk
 
 def extract_video_id(youtube_url):
     """Extract video ID from YouTube URL"""
@@ -93,63 +259,22 @@ def get_video_metadata_api(video_id):
     return None
 
 def get_video_duration(youtube_url):
-    """Get video duration - uses official YouTube Data API (primary) with yt-dlp fallback"""
+    """Get video duration using YouTube Data API"""
     video_id = extract_video_id(youtube_url)
-
     if video_id and YOUTUBE_API_KEY:
-        # Try official API first (stable, won't break)
         metadata = get_video_metadata_api(video_id)
         if metadata and metadata.get('duration_seconds'):
             return metadata['duration_seconds']
-
-    # Fallback to yt-dlp only if API fails
-    print(f"   ⚠️  YouTube API unavailable, falling back to yt-dlp...")
-    try:
-        result = subprocess.run(
-            ['yt-dlp', '--cookies', 'cookies.txt', '--get-duration', '--no-warnings', '--quiet', youtube_url],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            duration_str = result.stdout.strip()
-            parts = duration_str.split(':')
-            if len(parts) == 2:  # MM:SS
-                return int(parts[0]) * 60 + int(parts[1])
-            elif len(parts) == 3:  # HH:MM:SS
-                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-    except Exception as e:
-        print(f"   ⚠️  yt-dlp fallback failed: {e}")
-
     return None
 
 def get_video_title(youtube_url):
-    """Get video title - uses official YouTube Data API (primary) with yt-dlp fallback"""
+    """Get video title using YouTube Data API"""
     video_id = extract_video_id(youtube_url)
-
     if video_id and YOUTUBE_API_KEY:
-        # Try official API first (stable, won't break)
         metadata = get_video_metadata_api(video_id)
         if metadata and metadata.get('title'):
             return metadata['title']
-
-    # Fallback to yt-dlp only if API fails
-    print(f"   ⚠️  YouTube API unavailable, falling back to yt-dlp...")
-    try:
-        result = subprocess.run(
-            ['yt-dlp', '--cookies', 'cookies.txt', '--get-title', youtube_url],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0:
-            title = result.stdout.strip()
-            if title:
-                return title
-    except Exception as e:
-        print(f"   ⚠️  yt-dlp fallback failed: {e}")
-
-    # Last resort: Use video ID
+    # Fallback: Use video ID
     if video_id:
         return f"YouTube Video ({video_id})"
     return "YouTube Video"
@@ -204,12 +329,20 @@ def retry_with_backoff(max_retries=4, base_delay=3):
     return decorator
 
 
-def analyze_video_chunked(report_id, youtube_url, duration_seconds):
-    """Analyze long videos by splitting into chunks"""
-    import tempfile
-    import shutil
+def format_timestamp(seconds):
+    """Convert seconds to MM:SS or H:MM:SS format"""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
 
-    temp_dir = None
+
+def analyze_video_chunked(report_id, youtube_url, duration_seconds):
+    """Analyze long videos using timestamp-based chunking (no downloads)"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     try:
         # Fetch video title
         print(f"   📺 Fetching video title...")
@@ -222,59 +355,24 @@ def analyze_video_chunked(report_id, youtube_url, duration_seconds):
             'video_title': video_title
         }).eq('id', report_id).execute()
 
-        # Create temp directory
-        temp_dir = tempfile.mkdtemp()
-        video_path = os.path.join(temp_dir, 'video.mp4')
-
-        # Download video
-        print(f"   ⬇️  Downloading video...")
-        download_result = subprocess.run(
-            ['yt-dlp', '--cookies', 'cookies.txt', '-f', 'worst', '-o', video_path, youtube_url],
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 minutes max
-        )
-
-        if download_result.returncode != 0:
-            raise Exception(f"Failed to download video: {download_result.stderr}")
-
-        print(f"   ✅ Downloaded: {os.path.getsize(video_path) / 1024 / 1024:.1f} MB")
-
-        # Split into chunks using configurable duration
+        # Calculate chunks
         chunk_duration = CHUNK_DURATION_SECONDS
         num_chunks = (duration_seconds // chunk_duration) + 1
-        print(f"   ✂️  Splitting into {num_chunks} chunks of {chunk_duration/60:.0f} minutes each...")
+        print(f"   ✂️  Analyzing {num_chunks} segments of {chunk_duration/60:.0f} minutes each (in parallel)...")
 
-        chunk_results = []
-        for i in range(num_chunks):
-            start_time = i * chunk_duration
-            chunk_path = os.path.join(temp_dir, f'chunk_{i}.mp4')
+        def analyze_segment(i):
+            """Analyze a single segment"""
+            start_seconds = i * chunk_duration
+            end_seconds = min((i + 1) * chunk_duration, duration_seconds)
+            start_timestamp = format_timestamp(start_seconds)
+            end_timestamp = format_timestamp(end_seconds)
 
-            # Split chunk with ffmpeg
-            split_result = subprocess.run(
-                ['ffmpeg', '-ss', str(start_time), '-i', video_path, '-t', str(chunk_duration),
-                 '-c', 'copy', chunk_path, '-y'],
-                capture_output=True,
-                timeout=300
-            )
+            print(f"   🤖 Analyzing segment {i+1}/{num_chunks} ({start_timestamp} to {end_timestamp})...")
 
-            if split_result.returncode != 0:
-                print(f"   ⚠️  Failed to create chunk {i+1}, skipping...")
-                continue
+            # Prompt Gemini to focus on specific time range
+            prompt = f"""Analyze ONLY the time range {start_timestamp} to {end_timestamp} of this video for child safety.
 
-            print(f"   📤 Uploading chunk {i+1}/{num_chunks}...")
-
-            # Upload to Gemini Files API
-            with open(chunk_path, 'rb') as f:
-                file_upload = client.files.upload(file=f)
-
-            print(f"   🤖 Analyzing chunk {i+1}/{num_chunks}...")
-
-            # Analyze chunk with detailed prompt
-            chunk_start_time = i * CHUNK_DURATION_SECONDS
-            prompt = f"""Analyze this video chunk ({i+1}/{num_chunks}) for child safety. Watch the ENTIRE chunk carefully.
-
-This chunk starts at {chunk_start_time} seconds ({chunk_start_time//60}:{chunk_start_time%60:02d}) in the full video.
+IMPORTANT: Focus ONLY on content between {start_timestamp} and {end_timestamp}. This is segment {i+1} of {num_chunks}.
 
 SCORING GUIDES:
 - violence_score: 0-20=none/cartoon, 21-50=mild slapstick, 51-80=action violence, 81-100=graphic
@@ -286,98 +384,75 @@ SCORING GUIDES:
 THEMES (only include what you ACTUALLY see):
 educational, entertainment, religious, lgbtq, political, scary, romantic, action, musical, animated, live-action
 
-SUMMARY - Provide a brief overview of this chunk WITHOUT timestamps. Just describe what happens in this part.
+SUMMARY - Brief overview of this segment WITHOUT timestamps.
 
-CONCERNS - CRITICAL REQUIREMENT: EVERY concern MUST have a timestamp in "at MM:SS" format FROM THE START OF THE FULL VIDEO!
-Format EXACTLY: "Description at MM:SS"
-Example: If violence happens 35 seconds into THIS chunk, report: "Violence at {(chunk_start_time + 35)//60}:{(chunk_start_time + 35)%60:02d}"
+CONCERNS - List up to 10 concerns. For EACH provide:
+- description: What happens (short, clear description)
+- timestamp: Exact time as "M:SS" or "H:MM:SS" from the START OF THE VIDEO
 
-WRONG: "Character uses violent language"
-CORRECT: "Character uses violent language at {chunk_start_time//60}:{chunk_start_time%60:02d}"
+POSITIVE ASPECTS - List up to 10 positive aspects. For EACH provide:
+- description: What happens (short, clear description)
+- timestamp: Exact time as "M:SS" or "H:MM:SS" from the START OF THE VIDEO
 
-List up to 10 concerns. EVERY SINGLE ONE must have " at MM:SS" in it!
+KEY MOMENTS - Identify key moments with timestamps:
+- timestamp_seconds: Exact time in seconds from the START OF THE VIDEO
+- timestamp_display: Timestamp in MM:SS format
+- type: violence, scary, nsfw, profanity, educational, or positive
+- description: What happens (max 150 chars)
+- severity: low, moderate, or high"""
 
-POSITIVE ASPECTS - CRITICAL REQUIREMENT: EVERY positive aspect MUST have a timestamp in "at MM:SS" format FROM THE START OF THE FULL VIDEO!
-Format EXACTLY: "Description at MM:SS"
-Example: If teaching moment happens 20 seconds into THIS chunk, report: "Teaches lesson at {(chunk_start_time + 20)//60}:{(chunk_start_time + 20)%60:02d}"
-
-WRONG: "Educational content about animals"
-CORRECT: "Educational content about animals at {chunk_start_time//60}:{chunk_start_time%60:02d}"
-
-List up to 10 positive aspects. EVERY SINGLE ONE must have " at MM:SS" in it!
-
-KEY MOMENTS - Identify key moments with timestamps (both concerns AND positive moments):
-- timestamp_seconds: The exact time in seconds from the START OF THE FULL VIDEO (add {chunk_start_time} to the time within this chunk)
-- timestamp_display: The timestamp in MM:SS format from the start of the full video
-- type: The category (violence, scary, nsfw, profanity, educational, positive)
-- description: What happens at this moment (max 150 chars)
-- severity: low, moderate, or high
-
-For example, if you see violence at 35 seconds into THIS CHUNK, the full video timestamp is {chunk_start_time} + 35 = {chunk_start_time + 35} seconds.
-
-REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every item MUST have " at MM:SS" format!"""
-
-            # Response schema for chunks (same as direct analysis)
-            chunk_schema = {
-                "type": "object",
-                "properties": {
-                    "safety_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                    "violence_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                    "nsfw_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                    "scary_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                    "profanity_detected": {"type": "boolean"},
-                    "themes": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
-                    "concerns": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
-                    "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
-                    "summary": {"type": "string", "maxLength": 300},
-                    "explanation": {"type": "string", "maxLength": 300},
-                    "recommendations": {"type": "string", "maxLength": 200},
-                    "key_moments": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "timestamp_seconds": {"type": "integer", "minimum": 0},
-                                "timestamp_display": {"type": "string"},
-                                "type": {"type": "string", "enum": ["violence", "scary", "nsfw", "profanity", "educational", "positive"]},
-                                "description": {"type": "string", "maxLength": 150},
-                                "severity": {"type": "string", "enum": ["low", "moderate", "high"]}
-                            },
-                            "required": ["timestamp_seconds", "timestamp_display", "type", "description", "severity"]
-                        },
-                        "maxItems": 10
-                    }
-                },
-                "required": ["safety_score", "violence_score", "nsfw_score", "scary_score",
-                            "profanity_detected", "themes", "concerns", "positive_aspects",
-                            "summary", "explanation", "recommendations", "key_moments"]
-            }
-
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=[file_upload, prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
-                    response_mime_type="application/json",
-                    response_schema=chunk_schema
-                )
-            )
-
-            # Parse response
-            response_text = response.text.strip().replace('```json', '').replace('```', '').strip()
             try:
-                chunk_result = json.loads(response_text)
-                chunk_results.append(chunk_result)
-                print(f"   ✅ Chunk {i+1} analyzed")
-            except:
-                print(f"   ⚠️  Failed to parse chunk {i+1} results")
+                @retry_with_backoff(max_retries=4, base_delay=3)
+                def call_gemini_segment():
+                    return client.models.generate_content(
+                        model=MODEL_NAME,
+                        contents=types.Content(
+                            parts=[
+                                types.Part(
+                                    file_data=types.FileData(
+                                        file_uri=youtube_url,
+                                        mime_type='video/mp4'
+                                    )
+                                ),
+                                types.Part(text=prompt)
+                            ]
+                        ),
+                        config=types.GenerateContentConfig(
+                            temperature=0.1,
+                            max_output_tokens=8192,
+                            media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
+                            response_mime_type="application/json",
+                            response_schema=ANALYSIS_SCHEMA
+                        )
+                    )
 
-            # Clean up chunk
-            os.remove(chunk_path)
+                response = call_gemini_segment()
+                chunk_result = parse_gemini_response(response)
+                print(f"   ✅ Segment {i+1} analyzed")
+                return (i, chunk_result)
+
+            except Exception as chunk_err:
+                err_lower = str(chunk_err).lower()
+                if any(kw in err_lower for kw in ['503', '500', 'overloaded', 'rate limit', 'quota']):
+                    raise  # Let retryable errors propagate
+                print(f"   ⚠️  Segment {i+1} error (using safe default): {chunk_err}")
+                return (i, dict(_SAFE_DEFAULT))
+
+        # Analyze all segments in parallel (max 5 concurrent to avoid rate limits)
+        chunk_results = [None] * num_chunks
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_segment, i): i for i in range(num_chunks)}
+            for future in as_completed(futures):
+                try:
+                    i, result = future.result()
+                    chunk_results[i] = result
+                except Exception as e:
+                    print(f"   ❌ Segment failed: {e}")
+                    i = futures[future]
+                    chunk_results[i] = dict(_SAFE_DEFAULT)
 
         # Merge results from all chunks
-        print(f"   🔄 Merging results from {len(chunk_results)} chunks...")
+        print(f"   🔄 Merging results from {len(chunk_results)} segments...")
         merged_result = merge_chunk_results(chunk_results)
 
         # Save to database
@@ -397,33 +472,19 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
             'scary_score': merged_result['scary_score'],
             'profanity_detected': merged_result['profanity_detected'],
             'analysis_result': merged_result,
+            'error_message': None,
             'analyzed_at': datetime.now().isoformat()
         }).eq('id', report_id).execute()
 
-        print(f"   ✅ Chunked analysis complete!")
+        print(f"   ✅ Timestamp-based analysis complete!")
         print(f"   📊 Safety: {merged_result['safety_score']}/100")
 
     except Exception as e:
         error_str = str(e)
-        print(f"   ❌ Chunked analysis failed: {error_str}")
+        print(f"   ❌ Timestamp-based analysis failed: {error_str}")
         import traceback
         traceback.print_exc()
-
-        # If download failed (cookies expired), re-raise so caller can try direct analysis
-        if 'download' in error_str.lower() or 'cookies' in error_str.lower():
-            print(f"   🔄 Re-raising download error for direct analysis fallback...")
-            raise
-
-        # For other errors (chunk analysis failures), mark as failed
-        service_supabase_client.table('reports').update({
-            'status': 'failed',
-            'error_message': error_str
-        }).eq('id', report_id).execute()
-
-    finally:
-        # Clean up temp directory
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+        raise
 
 
 def merge_chunk_results(chunk_results):
@@ -459,14 +520,13 @@ def merge_chunk_results(chunk_results):
 
     for chunk in chunk_results:
         all_themes.update(chunk.get('themes', []))
-        all_concerns.extend(chunk.get('concerns', []))
-        all_positive.extend(chunk.get('positive_aspects', []))
+        all_concerns.extend(convert_structured_items(chunk.get('concerns', [])))
+        all_positive.extend(convert_structured_items(chunk.get('positive_aspects', [])))
         all_key_moments.extend(chunk.get('key_moments', []))
 
     # Extract timestamps from concerns/positive and sort them chronologically
     def extract_timestamp(text):
         """Extract timestamp in seconds from text like 'Something at 2:35'"""
-        import re
         match = re.search(r'at (\d+):(\d+)', text)
         if match:
             minutes = int(match.group(1))
@@ -500,6 +560,31 @@ def merge_chunk_results(chunk_results):
         'recommendations': 'Review all concerns carefully for long videos',
         'key_moments': sorted_key_moments
     }
+
+
+def convert_structured_items(items):
+    """
+    Convert structured {description, timestamp} objects to "description at timestamp" strings.
+    Handles both formats transparently:
+    - If item is already a string (legacy/fallback), keep as-is
+    - If item is a dict with description+timestamp, combine into string
+    """
+    if not items:
+        return items
+
+    converted = []
+    for item in items:
+        if isinstance(item, dict):
+            desc = str(item.get('description', '')).strip()
+            ts = str(item.get('timestamp', '')).strip()
+            if desc and ts:
+                converted.append(f"{desc} at {ts}")
+            elif desc:
+                converted.append(desc)
+            # Skip empty dicts
+        elif isinstance(item, str) and item.strip():
+            converted.append(item.strip())
+    return converted
 
 
 def deduplicate_and_clean(items):
@@ -573,7 +658,7 @@ def calculate_age_recommendation(violence_score, scary_score, nsfw_score, profan
 
 
 def analyze_video(report_id, youtube_url):
-    """Analyze a YouTube video - uses chunking for 30+ minute videos"""
+    """Analyze a YouTube video - uses timestamp-based chunking for 30+ minute videos"""
 
     try:
         print(f"   🎥 Video URL: {youtube_url}")
@@ -589,23 +674,11 @@ def analyze_video(report_id, youtube_url):
             # Use chunking for videos longer than MAX_DURATION_FOR_FULL_ANALYSIS
             if duration_seconds > MAX_DURATION_FOR_FULL_ANALYSIS:
                 num_chunks = (duration_seconds // CHUNK_DURATION_SECONDS) + 1
-                print(f"   🔄 Video exceeds {MAX_DURATION_FOR_FULL_ANALYSIS/60:.0f} minutes - trying chunked analysis first")
-                print(f"   ✂️  Will split into {num_chunks} chunks of {CHUNK_DURATION_SECONDS/60:.0f} minutes each")
-                try:
-                    return analyze_video_chunked(report_id, youtube_url, duration_seconds)
-                except Exception as chunked_error:
-                    # If chunked fails (e.g., cookie expired), fall back to direct Gemini analysis
-                    # Gemini can sometimes handle videos >60min directly via URL
-                    print(f"   ⚠️  Chunked analysis failed: {str(chunked_error)}")
-                    print(f"   🔄 Falling back to direct Gemini analysis (may work for videos up to ~2hrs)...")
-                    # Reset status to processing for the direct analysis attempt
-                    service_supabase_client.table('reports').update({
-                        'status': 'processing',
-                        'error_message': None
-                    }).eq('id', report_id).execute()
-                    # Continue to direct analysis below
+                print(f"   🔄 Video exceeds {MAX_DURATION_FOR_FULL_ANALYSIS/60:.0f} minutes - using timestamp-based chunking")
+                print(f"   ✂️  Will analyze {num_chunks} segments of {CHUNK_DURATION_SECONDS/60:.0f} minutes each")
+                return analyze_video_chunked(report_id, youtube_url, duration_seconds)
         else:
-            print(f"   ⚠️  Duration detection failed - will try direct analysis first")
+            print(f"   ⚠️  Duration detection failed - proceeding with direct analysis")
 
         # Fetch video title
         print(f"   📺 Fetching video title...")
@@ -634,33 +707,13 @@ educational, entertainment, religious, lgbtq, political, scary, romantic, action
 
 SUMMARY - Provide a brief overview of the video WITHOUT timestamps. Just describe what the video is about.
 
-CONCERNS - CRITICAL REQUIREMENT: EVERY concern MUST have a timestamp in "at MM:SS" format!
-Format EXACTLY like this: "Description at 2:35"
-WRONG: "Slapstick moments where characters almost crash"
-CORRECT: "Slapstick moments at 2:35"
-WRONG: "Child is scared by facial expressions"
-CORRECT: "Child scared by facial expressions at 5:12"
+CONCERNS - List up to 10 concerns. For EACH concern provide:
+- description: What happens (short, clear description)
+- timestamp: The exact time as "M:SS" or "H:MM:SS" when it occurs in the video
 
-Examples:
-- "Character uses violent language at 2:35"
-- "Scary monster appears at 5:12"
-- "Inappropriate joke at 8:20"
-
-List up to 10 concerns. EVERY SINGLE ONE must have " at MM:SS" in it!
-
-POSITIVE ASPECTS - CRITICAL REQUIREMENT: EVERY positive aspect MUST have a timestamp in "at MM:SS" format!
-Format EXACTLY like this: "Description at 2:35"
-WRONG: "Highlights the importance of helping others"
-CORRECT: "Highlights helping others at 3:45"
-WRONG: "Strong themes of courage"
-CORRECT: "Shows courage at 7:20"
-
-Examples:
-- "Teaches sharing at 1:45"
-- "Beautiful music at 3:20"
-- "Educational fact at 9:10"
-
-List up to 10 positive aspects. EVERY SINGLE ONE must have " at MM:SS" in it!
+POSITIVE ASPECTS - List up to 10 positive aspects. For EACH provide:
+- description: What happens (short, clear description)
+- timestamp: The exact time as "M:SS" or "H:MM:SS" when it occurs in the video
 
 KEY MOMENTS - Identify 5-10 key moments with timestamps (both concerns AND positive moments):
 - timestamp_seconds: The exact time in seconds from the start of the video
@@ -669,45 +722,7 @@ KEY MOMENTS - Identify 5-10 key moments with timestamps (both concerns AND posit
 - description: What happens at this moment (max 150 chars)
 - severity: low, moderate, or high
 
-For example, if you see violence at 155 seconds (2:35), record: timestamp_seconds=155, timestamp_display="2:35", type="violence", description="Character hits another with hammer", severity="moderate"
-
-REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every item MUST have " at MM:SS" format!"""
-
-        # Response schema with maximum safe limits (tested to prevent truncation)
-        response_schema = {
-            "type": "object",
-            "properties": {
-                "safety_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                "violence_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                "nsfw_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                "scary_score": {"type": "integer", "minimum": 0, "maximum": 100},
-                "profanity_detected": {"type": "boolean"},
-                "themes": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
-                "concerns": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
-                "positive_aspects": {"type": "array", "items": {"type": "string", "maxLength": 200}, "maxItems": 10},
-                "summary": {"type": "string", "maxLength": 300},
-                "explanation": {"type": "string", "maxLength": 300},
-                "recommendations": {"type": "string", "maxLength": 200},
-                "key_moments": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "timestamp_seconds": {"type": "integer", "minimum": 0},
-                            "timestamp_display": {"type": "string"},
-                            "type": {"type": "string", "enum": ["violence", "scary", "nsfw", "profanity", "educational", "positive"]},
-                            "description": {"type": "string", "maxLength": 150},
-                            "severity": {"type": "string", "enum": ["low", "moderate", "high"]}
-                        },
-                        "required": ["timestamp_seconds", "timestamp_display", "type", "description", "severity"]
-                    },
-                    "maxItems": 10
-                }
-            },
-            "required": ["safety_score", "violence_score", "nsfw_score", "scary_score",
-                        "profanity_detected", "themes", "concerns", "positive_aspects",
-                        "summary", "explanation", "recommendations", "key_moments"]
-        }
+For example, if you see violence at 155 seconds (2:35), record: timestamp_seconds=155, timestamp_display="2:35", type="violence", description="Character hits another with hammer", severity="moderate" """
 
         # Analyze directly from YouTube URL
         print(f"   🤖 Analyzing with Gemini AI...")
@@ -734,110 +749,30 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
                     max_output_tokens=8192,  # Long videos need more tokens for concerns/positive arrays
                     media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
                     response_mime_type="application/json",
-                    response_schema=response_schema
+                    response_schema=ANALYSIS_SCHEMA
                 )
             )
 
-        # Call Gemini
+        # Call Gemini — if the SDK raises JSONDecodeError (truncated/drifted
+        # response that fails internal validation), recover with safe default
+        # rather than propagating.  The SDK occasionally does this even with
+        # dict schemas when the response is severely truncated.
         print(f"   📡 Calling Gemini API...")
-        response = call_gemini_api()
-        print(f"   ✅ Gemini API call succeeded!")
-
-        # Check if response has content
-        if not response.text:
-            print(f"   ❌ Empty response - video may be restricted")
-            raise Exception("Gemini returned empty response - video may be age-restricted or unavailable")
-
-        # Parse JSON with error handling
-        print(f"   📄 Response length: {len(response.text)} chars")
-        print(f"   📄 Response preview: {response.text[:500]}...")
-
         try:
-            result = json.loads(response.text)
-            print(f"   ✅ JSON parsed successfully")
-        except json.JSONDecodeError as e:
-            print(f"   ❌ JSON Parse Error: {str(e)}")
-            print(f"   📄 Response preview (first 1000 chars): {response.text[:1000]}")
-
-            # Helper: extract a string array from malformed JSON text (last resort)
-            def extract_string_array(text, key):
-                """Extract ["str1", "str2", ...] for a given key from malformed JSON"""
-                pattern = rf'"{key}"\s*:\s*\['
-                match = re.search(pattern, text)
-                if not match:
-                    return []
-                start = match.end()
-                depth = 1
-                pos = start
-                while pos < len(text) and depth > 0:
-                    if text[pos] == '[': depth += 1
-                    elif text[pos] == ']': depth -= 1
-                    pos += 1
-                array_text = text[start:pos-1] if depth == 0 else text[start:]
-                return re.findall(r'"((?:[^"\\]|\\.)*)"', array_text)
-
-            import re
-
-            # Level 1: Use json-repair library (handles unterminated strings, missing commas, etc.)
-            try:
-                from json_repair import repair_json
-                repaired = repair_json(response.text, return_objects=True)
-                if isinstance(repaired, dict) and 'safety_score' in repaired:
-                    result = repaired
-                    print(f"   ✅ JSON repaired successfully via json-repair")
-                else:
-                    raise ValueError("Repaired JSON missing required fields")
-            except Exception as repair_err:
-                print(f"   ⚠️  json-repair fallback: {str(repair_err)}")
-
-                # Level 2: Regex extraction of all fields from raw text
-                try:
-                    violence = re.search(r'"violence_score":\s*(\d+)', response.text)
-                    nsfw = re.search(r'"nsfw_score":\s*(\d+)', response.text)
-                    scary = re.search(r'"scary_score":\s*(\d+)', response.text)
-                    safety = re.search(r'"safety_score":\s*(\d+)', response.text)
-                    profanity = re.search(r'"profanity_detected":\s*(true|false)', response.text)
-                    summary_match = re.search(r'"summary":\s*"((?:[^"\\]|\\.)*)"', response.text)
-
-                    concerns = extract_string_array(response.text, 'concerns')
-                    positive_aspects = extract_string_array(response.text, 'positive_aspects')
-                    themes = extract_string_array(response.text, 'themes')
-
-                    print(f"   📊 Regex extracted: {len(concerns)} concerns, {len(positive_aspects)} positives, {len(themes)} themes")
-
-                    if not concerns:
-                        concerns = ["See safety scores above for content assessment"]
-
-                    if violence and nsfw and scary and safety:
-                        print(f"   ✅ Extracted full data via regex fallback")
-                        result = {
-                            "safety_score": int(safety.group(1)),
-                            "violence_score": int(violence.group(1)),
-                            "nsfw_score": int(nsfw.group(1)),
-                            "scary_score": int(scary.group(1)),
-                            "profanity_detected": profanity.group(1) == 'true' if profanity else False,
-                            "themes": themes,
-                            "concerns": concerns,
-                            "positive_aspects": positive_aspects,
-                            "summary": summary_match.group(1) if summary_match else "Video analyzed - see details below",
-                            "key_moments": []
-                        }
-                    else:
-                        raise Exception("Could not extract basic scores")
-                except Exception as extract_err:
-                    print(f"   ⚠️  Regex extraction error: {str(extract_err)}")
-                    result = {
-                        "safety_score": 50,
-                        "violence_score": 0,
-                        "nsfw_score": 0,
-                        "scary_score": 0,
-                        "profanity_detected": False,
-                        "themes": [],
-                        "concerns": ["Unable to fully analyze - API response error"],
-                        "positive_aspects": [],
-                        "summary": "Analysis incomplete due to technical error",
-                        "key_moments": []
-                    }
+            response = call_gemini_api()
+            print(f"   ✅ Gemini API call succeeded!")
+            # Parse response (never raises — always returns a valid dict)
+            result = parse_gemini_response(response)
+        except Exception as gemini_err:
+            err_lower = str(gemini_err).lower()
+            # Retryable errors (503, overloaded) should have been handled by
+            # retry_with_backoff — if they still escape, re-raise them.
+            if any(kw in err_lower for kw in ['503', '500', 'overloaded', 'rate limit', 'quota']):
+                raise
+            # JSONDecodeError / parse errors: use safe default so analysis
+            # "completes" with empty data rather than showing an error.
+            print(f"   ⚠️  Gemini response parse error (using safe default): {gemini_err}")
+            result = dict(_SAFE_DEFAULT)
 
         # Extract and validate scores
         safety_score = max(0, min(100, int(result.get('safety_score', 50))))
@@ -851,6 +786,10 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
         result.setdefault('concerns', [])
         result.setdefault('positive_aspects', [])
         result.setdefault('key_moments', [])
+
+        # Convert structured {description, timestamp} objects to "desc at timestamp" strings
+        result['concerns'] = convert_structured_items(result['concerns'])
+        result['positive_aspects'] = convert_structured_items(result['positive_aspects'])
 
         # Deduplicate and remove truncated items from concerns/positive
         result['concerns'] = deduplicate_and_clean(result['concerns'])
@@ -878,21 +817,41 @@ REMINDER: DO NOT submit concerns or positive_aspects without timestamps! Every i
             'scary_score': scary_score,
             'profanity_detected': profanity_detected,
             'analysis_result': result,
+            'error_message': None,  # Clear any stale error from previous attempts
             'analyzed_at': datetime.now().isoformat()
         }).eq('id', report_id).execute()
 
         print(f"   ✅ Saved to database!")
 
     except Exception as e:
-        print(f"   ❌ Failed: {str(e)}")
+        error_str = str(e)
+        print(f"   ❌ Failed: {error_str}")
         import traceback
         print(traceback.format_exc())
-        
+
+        # Map internal errors to clean, user-facing messages.
+        # Only specific, user-actionable errors get bespoke text;
+        # EVERYTHING else maps to the generic "technical issue" message so that
+        # no internal stack trace / JSON parse detail ever reaches the end user.
+        lower = error_str.lower()
+        if 'age-restricted' in lower or 'unavailable' in lower:
+            user_error = "This video is age-restricted or unavailable. Please try a different video."
+        elif 'timed out' in lower or 'timeout' in lower:
+            user_error = "Analysis timed out. Please try again — longer videos may take more time."
+        else:
+            # Catch-all: covers JSON drift errors ("Unterminated string…",
+            # "Expecting property name…"), SDK validation errors, network
+            # blips, and any future error variant we haven't seen yet.
+            user_error = "Video analysis encountered a technical issue. Please try again."
+
         try:
+            # Guard: only write 'failed' if still 'processing'.
+            # A concurrent worker may have already completed this report —
+            # don't overwrite 'completed' with 'failed'.
             service_supabase_client.table('reports').update({
                 'status': 'failed',
-                'error_message': str(e)
-            }).eq('id', report_id).execute()
+                'error_message': user_error
+            }).eq('id', report_id).eq('status', 'processing').execute()
         except:
             pass
 
@@ -902,11 +861,13 @@ def process_pending_reports():
         print(f"   🔍 Querying database for pending reports...")
         print(f"   🔗 Supabase URL: {service_supabase_client.supabase_url}")
 
-        # Reset stale 'processing' reports (stuck >15 min) back to 'pending'
-        stale_cutoff = (datetime.now() - timedelta(minutes=15)).isoformat()
+        # Reset stale 'processing' reports (stuck >30 min) back to 'pending'.
+        # 30 min (not 15) because long-video direct Gemini URL analysis can legitimately
+        # take 10-20 min; 15 min was causing completed reports to be re-triggered.
+        stale_cutoff = (datetime.now() - timedelta(minutes=30)).isoformat()
         stale_result = service_supabase_client.table('reports').update({
             'status': 'pending',
-            'error_message': 'Reset: was stuck in processing for >15 min'
+            'error_message': 'Reset: was stuck in processing for >30 min'
         }).eq('status', 'processing').lt('updated_at', stale_cutoff).execute()
         if stale_result.data:
             print(f"   🔄 Reset {len(stale_result.data)} stale processing report(s) to pending")
@@ -930,8 +891,21 @@ def process_pending_reports():
         print(f"📋 FOUND {len(reports)} PENDING REPORT(S)")
         print(f"{'='*60}\n")
 
-        # Process each report
+        # Process each report — atomic claim prevents concurrent workers from
+        # double-processing the same report (Cloud Scheduler fires every minute).
         for idx, report in enumerate(reports, 1):
+            # Atomically claim: UPDATE WHERE status = 'pending'.
+            # If another concurrent worker already claimed it, this returns no rows
+            # and we skip.
+            claim = service_supabase_client.table('reports').update({
+                'status': 'processing',
+                'updated_at': datetime.now().isoformat()
+            }).eq('id', report['id']).eq('status', 'pending').execute()
+
+            if not claim.data:
+                print(f"\n   ⏭️  Report {report['id'][:8]}… already claimed by another worker — skipping")
+                continue
+
             print(f"\n{'='*60}")
             print(f"[{idx}/{len(reports)}] PROCESSING REPORT")
             print(f"{'='*60}")
