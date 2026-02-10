@@ -17,9 +17,11 @@ export default function Navigation({ currentView, setCurrentView, onViewChange }
         <div className="flex items-center justify-between h-18">
           {/* Logo/Brand */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-[#FF9C8A] to-[#FF7B6B] rounded-xl flex items-center justify-center shadow-lg">
-              <Shield className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
-            </div>
+            <img
+              src="/PopSightLogo.svg"
+              alt="PopSight Logo"
+              className="w-10 h-10 sm:w-12 sm:h-12"
+            />
             <span className="text-xl sm:text-2xl font-black bg-gradient-to-r from-[#FF9C8A] to-[#5BC5B8] bg-clip-text text-transparent tracking-tight">
               <span className="hidden sm:inline">PopSight</span>
               <span className="sm:hidden">PS</span>

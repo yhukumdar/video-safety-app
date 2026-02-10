@@ -52,10 +52,12 @@ export default function Login({ onBackToHome }) {
             </button>
           )}
           <div className="flex items-center gap-4 mb-8">
-            <div className="w-20 h-20 bg-gradient-to-br from-[#8FA888] to-[#7a9377] rounded-3xl flex items-center justify-center shadow-2xl transform rotate-3 hover:rotate-0 transition-transform">
-              <Shield className="w-12 h-12 text-white" />
-            </div>
-            <h1 className="text-4xl font-black tracking-tight">Video Safety</h1>
+            <img
+              src="/PopSightLogo.svg"
+              alt="PopSight Logo"
+              className="w-20 h-20"
+            />
+            <h1 className="text-4xl font-black tracking-tight">PopSight</h1>
           </div>
           <h2 className="text-5xl sm:text-6xl font-black mb-6 max-w-2xl leading-tight bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">
             Know what your kids are watching
