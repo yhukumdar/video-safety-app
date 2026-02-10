@@ -43,6 +43,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",  # React dev server
+        "http://localhost:5174",  # React dev server (alternate port)
         "https://video-safety-app-9a6b5.web.app",  # Firebase Hosting
         "https://video-safety-app-9a6b5.firebaseapp.com"  # Firebase alternate domain
     ],

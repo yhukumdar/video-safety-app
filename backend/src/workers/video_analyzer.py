@@ -753,25 +753,53 @@ For example, if you see violence at 155 seconds (2:35), record: timestamp_second
                 )
             )
 
-        # Call Gemini — if the SDK raises JSONDecodeError (truncated/drifted
-        # response that fails internal validation), recover with safe default
-        # rather than propagating.  The SDK occasionally does this even with
-        # dict schemas when the response is severely truncated.
+        # Call Gemini with multiple fallback strategies for maximum reliability
         print(f"   📡 Calling Gemini API...")
-        try:
-            response = call_gemini_api()
-            print(f"   ✅ Gemini API call succeeded!")
-            # Parse response (never raises — always returns a valid dict)
-            result = parse_gemini_response(response)
-        except Exception as gemini_err:
-            err_lower = str(gemini_err).lower()
-            # Retryable errors (503, overloaded) should have been handled by
-            # retry_with_backoff — if they still escape, re-raise them.
-            if any(kw in err_lower for kw in ['503', '500', 'overloaded', 'rate limit', 'quota']):
-                raise
-            # JSONDecodeError / parse errors: use safe default so analysis
-            # "completes" with empty data rather than showing an error.
-            print(f"   ⚠️  Gemini response parse error (using safe default): {gemini_err}")
+        result = None
+        attempts = 0
+        max_parse_attempts = 3
+
+        while attempts < max_parse_attempts and result is None:
+            try:
+                attempts += 1
+                if attempts > 1:
+                    print(f"   🔄 Parse attempt {attempts}/{max_parse_attempts}...")
+
+                response = call_gemini_api()
+                print(f"   ✅ Gemini API call succeeded!")
+
+                # Parse response (never raises — always returns a valid dict)
+                result = parse_gemini_response(response)
+
+                # Validate result has required fields
+                if result and isinstance(result, dict):
+                    required_keys = ['safety_score', 'violence_score', 'nsfw_score', 'scary_score']
+                    if all(key in result for key in required_keys):
+                        print(f"   ✅ Valid analysis result obtained")
+                        break
+                    else:
+                        print(f"   ⚠️  Result missing required fields, retrying...")
+                        result = None
+
+            except Exception as gemini_err:
+                err_lower = str(gemini_err).lower()
+                # Retryable errors (503, overloaded) should have been handled by
+                # retry_with_backoff — if they still escape, re-raise them.
+                if any(kw in err_lower for kw in ['503', '500', 'overloaded', 'rate limit', 'quota']):
+                    raise
+                # JSONDecodeError / parse errors: retry a few times before giving up
+                print(f"   ⚠️  Parse error (attempt {attempts}/{max_parse_attempts}): {gemini_err}")
+                if attempts >= max_parse_attempts:
+                    print(f"   ⚠️  Max parse attempts reached, using safe default")
+                    result = dict(_SAFE_DEFAULT)
+                else:
+                    # Wait a bit before retrying
+                    import time
+                    time.sleep(1)
+
+        # Final fallback
+        if not result:
+            print(f"   ⚠️  No valid result after {max_parse_attempts} attempts, using safe default")
             result = dict(_SAFE_DEFAULT)
 
         # Extract and validate scores
@@ -834,14 +862,18 @@ For example, if you see violence at 155 seconds (2:35), record: timestamp_second
         # EVERYTHING else maps to the generic "technical issue" message so that
         # no internal stack trace / JSON parse detail ever reaches the end user.
         lower = error_str.lower()
-        if 'age-restricted' in lower or 'unavailable' in lower:
-            user_error = "This video is age-restricted or unavailable. Please try a different video."
+
+        # IMPORTANT: Never show raw JSON errors, stack traces, or internal details to users
+        # All errors map to user-friendly messages
+        if 'age-restricted' in lower or 'unavailable' in lower or 'private' in lower:
+            user_error = "This video is age-restricted, private, or unavailable. Please try a different video."
         elif 'timed out' in lower or 'timeout' in lower:
             user_error = "Analysis timed out. Please try again — longer videos may take more time."
+        elif any(keyword in lower for keyword in ['json', 'unterminated', 'expecting', 'decode', 'parse', 'malformed']):
+            # JSON parsing errors - use generic message, never show JSON details
+            user_error = "Analysis encountered a temporary issue. Please try analyzing this video again."
         else:
-            # Catch-all: covers JSON drift errors ("Unterminated string…",
-            # "Expecting property name…"), SDK validation errors, network
-            # blips, and any future error variant we haven't seen yet.
+            # Catch-all: covers network blips, API errors, and any future error variant
             user_error = "Video analysis encountered a technical issue. Please try again."
 
         try:

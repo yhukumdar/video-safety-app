@@ -125,57 +125,74 @@ export default function KidProfiles() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-white">Kid Profiles</h2>
-          <p className="text-slate-400 text-xs sm:text-sm mt-1">
+          <h2 className="text-xl sm:text-2xl font-bold text-[#2B4570]">Kid Profiles</h2>
+          <p className="text-[#6B7280] text-xs sm:text-sm mt-1 mb-1">
             Create profiles for each child to customize content filtering
+          </p>
+          <p className="text-xs text-[#8FA888]">
+            You're doing a great job keeping your kids safe
           </p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center gap-2 transition-colors touch-manipulation w-full sm:w-auto"
+          className="px-6 py-3 bg-gradient-to-r from-[#8FA888] to-[#7a9377] hover:from-[#7a9377] hover:to-[#6b8468] text-white rounded-xl flex items-center justify-center gap-2 transition-all touch-manipulation w-full sm:w-auto shadow-lg hover:shadow-xl transform hover:scale-105"
         >
           <Plus className="w-5 h-5" />
-          <span className="font-medium">Add Kid Profile</span>
+          <span className="font-bold">➕ Add Kid Profile</span>
         </button>
       </div>
 
       {/* Kids Grid */}
       {kids.length === 0 ? (
-        <div className="text-center py-12 bg-slate-800 rounded-lg border border-slate-700">
-          <User className="w-12 h-12 text-slate-500 mx-auto mb-4" />
-          <p className="text-slate-400">No kid profiles yet. Create one to get started!</p>
+        <div className="text-center py-16 bg-white rounded-2xl border border-gray-200 shadow-sm">
+          <div className="w-20 h-20 bg-[#8FA888]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <User className="w-10 h-10 text-[#8FA888]" />
+          </div>
+          <h3 className="text-xl font-bold text-[#2B4570] mb-2">Create your first kid profile</h3>
+          <p className="text-[#6B7280] max-w-md mx-auto mb-6">
+            Each profile lets you set personalized content preferences and age-appropriate filters. It only takes a minute!
+          </p>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-6 py-3 bg-[#8FA888] hover:bg-[#7a9377] text-white rounded-2xl font-semibold transition-colors shadow-md inline-flex items-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Add Your First Profile
+          </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {kids.map((kid) => (
             <div
               key={kid.id}
-              className="bg-slate-800 rounded-xl p-4 sm:p-6 border border-slate-700 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 transform hover:-translate-y-1"
+              className="bg-gradient-to-br from-white to-blue-50/30 rounded-3xl p-6 border-2 border-gray-100 hover:border-[#8FA888] hover:shadow-2xl transition-all duration-300 transform hover:scale-105"
             >
               {/* Avatar */}
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-2xl font-bold text-white mb-4">
+              <div className="w-20 h-20 bg-gradient-to-br from-[#8FA888] to-[#7a9377] rounded-2xl flex items-center justify-center text-3xl font-black text-white mb-4 shadow-lg">
                 {kid.name.charAt(0).toUpperCase()}
               </div>
 
               {/* Info */}
-              <h3 className="text-xl font-semibold text-white mb-2">{kid.name}</h3>
-              <p className="text-slate-400 text-sm mb-4">Age: {kid.age} years old</p>
+              <h3 className="text-2xl font-bold text-[#2B4570] mb-2">{kid.name}</h3>
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-lg">🎂</span>
+                <p className="text-[#6B7280] text-base font-medium">{kid.age} years old</p>
+              </div>
 
               {/* Actions */}
               <div className="flex gap-2">
                 <button
                   onClick={() => handleEdit(kid)}
-                  className="flex-1 px-3 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded flex items-center justify-center gap-2 transition-colors touch-manipulation"
+                  className="flex-1 px-3 py-3 bg-white border-2 border-gray-200 hover:border-[#8FA888] text-[#2B4570] rounded-xl flex items-center justify-center gap-2 transition-all touch-manipulation hover:shadow-md font-semibold"
                 >
                   <Edit className="w-4 h-4" />
                   <span className="text-sm">Edit</span>
                 </button>
                 <button
                   onClick={() => handleDelete(kid.id)}
-                  className="px-3 py-2.5 bg-red-900/50 hover:bg-red-900 text-red-300 rounded flex items-center justify-center gap-2 transition-colors touch-manipulation"
+                  className="px-4 py-3 bg-red-50 border-2 border-red-200 hover:border-red-400 hover:bg-red-100 text-red-600 rounded-xl flex items-center justify-center gap-2 transition-all touch-manipulation hover:shadow-md font-semibold"
                 >
                   <Trash2 className="w-4 h-4" />
-                  <span className="text-sm">Delete</span>
                 </button>
               </div>
             </div>
@@ -186,15 +203,15 @@ export default function KidProfiles() {
       {/* Add/Edit Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto animate-fadeIn">
-          <div className="bg-slate-800 rounded-xl max-w-md w-full p-4 sm:p-6 border border-slate-700 my-8 shadow-2xl animate-slideUp">
+          <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-6 border border-gray-200 my-8 shadow-2xl animate-slideUp">
             {/* Modal Header */}
             <div className="flex justify-between items-center mb-4 sm:mb-6">
-              <h3 className="text-lg sm:text-xl font-bold text-white">
+              <h3 className="text-lg sm:text-xl font-bold text-[#2B4570]">
                 {editingKid ? 'Edit Profile' : 'Add Kid Profile'}
               </h3>
               <button
                 onClick={closeModal}
-                className="text-slate-400 hover:text-white transition-colors p-1 touch-manipulation"
+                className="text-[#6B7280] hover:text-[#2B4570] transition-colors p-1 touch-manipulation"
                 aria-label="Close modal"
               >
                 <X className="w-6 h-6" />
@@ -204,7 +221,7 @@ export default function KidProfiles() {
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-[#2B4570] mb-2">
                   Name *
                 </label>
                 <input
@@ -212,13 +229,13 @@ export default function KidProfiles() {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   required
-                  className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded text-white text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-2xl text-[#2B4570] text-base focus:outline-none focus:ring-2 focus:ring-[#8FA888] focus:border-transparent"
                   placeholder="Enter child's name"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-[#2B4570] mb-2">
                   Age *
                 </label>
                 <input
@@ -228,25 +245,25 @@ export default function KidProfiles() {
                   required
                   min="0"
                   max="18"
-                  className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded text-white text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-2xl text-[#2B4570] text-base focus:outline-none focus:ring-2 focus:ring-[#8FA888] focus:border-transparent"
                   placeholder="Enter age"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
+                <label className="block text-sm font-medium text-[#2B4570] mb-2">
                   Date of Birth (Optional)
                 </label>
                 <input
                   type="date"
                   value={formData.date_of_birth}
                   onChange={(e) => setFormData({ ...formData, date_of_birth: e.target.value })}
-                  className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded text-white text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-2xl text-[#2B4570] text-base focus:outline-none focus:ring-2 focus:ring-[#8FA888] focus:border-transparent"
                 />
               </div>
 
               {error && (
-                <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded">
+                <div className="bg-red-50 border border-red-300 text-red-600 px-4 py-3 rounded-2xl">
                   {error}
                 </div>
               )}
@@ -255,14 +272,14 @@ export default function KidProfiles() {
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded transition-colors touch-manipulation"
+                  className="flex-1 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-[#2B4570] rounded-2xl transition-colors touch-manipulation"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded flex items-center justify-center gap-2 transition-colors touch-manipulation disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-4 py-3 bg-[#8FA888] hover:bg-[#7a9377] text-white rounded-2xl flex items-center justify-center gap-2 transition-colors touch-manipulation disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
                 >
                   {submitting ? (
                     <>

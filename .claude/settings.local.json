@@ -5,7 +5,18 @@
       "Bash(mkdir:*)",
       "Bash(chmod:*)",
       "Bash(rmdir:*)",
-      "Bash(npm test)"
+      "Bash(npm test)",
+      "Bash(gcloud run deploy:*)",
+      "Bash(curl -X POST https://video-safety-backend-976885701274.us-central1.run.app/worker/process-pending -H \"Content-Type: application/json\")",
+      "Bash(gcloud logging read:*)",
+      "Bash(gcloud scheduler jobs create:*)",
+      "Bash(gcloud services enable:*)",
+      "Bash(gcloud run services add-iam-policy-binding:*)",
+      "Bash(gcloud scheduler jobs run:*)",
+      "WebSearch",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

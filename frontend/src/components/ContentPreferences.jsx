@@ -182,10 +182,27 @@ export default function ContentPreferences() {
 
   if (kidProfiles.length === 0) {
     return (
-      <div className="bg-slate-800 rounded-xl p-8 border border-slate-700 shadow-lg text-center">
-        <AlertCircle className="w-12 h-12 text-slate-500 mx-auto mb-4" />
-        <p className="text-slate-400 mb-4">No kid profiles found. Create a kid profile first.</p>
-        <p className="text-sm text-slate-500">Go to "Kid Profiles" to add your first child.</p>
+      <div className="bg-white rounded-2xl p-16 border border-gray-200 shadow-sm text-center">
+        <div className="w-20 h-20 bg-[#8FA888]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+          <AlertCircle className="w-10 h-10 text-[#8FA888]" />
+        </div>
+        <h3 className="text-xl font-bold text-[#2B4570] mb-2">Create a kid profile first</h3>
+        <p className="text-[#6B7280] mb-2 max-w-md mx-auto">
+          Content preferences are customized for each child. Start by creating a kid profile.
+        </p>
+        <p className="text-sm text-[#8FA888] mb-6">
+          Every parent's values are different—we help you set what works for your family.
+        </p>
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault()
+            // This would normally navigate to profiles, but since we're in Dashboard, the user can use nav
+          }}
+          className="inline-block px-6 py-3 bg-[#8FA888] hover:bg-[#7a9377] text-white rounded-2xl font-semibold transition-colors shadow-md"
+        >
+          Go to Kid Profiles
+        </a>
       </div>
     )
   }
@@ -195,14 +212,17 @@ export default function ContentPreferences() {
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Kid Selector */}
-      <div className="bg-slate-800 rounded-xl p-4 sm:p-6 border border-slate-700 shadow-lg">
-        <label className="block text-xs sm:text-sm font-medium text-slate-300 mb-3">
+      <div className="bg-white rounded-2xl p-4 sm:p-6 border border-gray-200 shadow-sm">
+        <label className="block text-xs sm:text-sm font-medium text-[#2B4570] mb-1">
           Select Kid Profile
         </label>
+        <p className="text-xs text-[#8FA888] mb-3">
+          Customize content filters for each child's age and your family's values
+        </p>
         <select
           value={selectedKid || ''}
           onChange={(e) => setSelectedKid(e.target.value)}
-          className="w-full px-3 sm:px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-sm sm:text-base text-white focus:outline-none focus:border-blue-500 touch-manipulation"
+          className="w-full px-3 sm:px-4 py-3 bg-gray-50 border border-gray-300 rounded-2xl text-sm sm:text-base text-[#2B4570] focus:outline-none focus:ring-2 focus:ring-[#8FA888] focus:border-transparent touch-manipulation"
         >
           {kidProfiles.map(kid => (
             <option key={kid.id} value={kid.id}>
@@ -217,15 +237,15 @@ export default function ContentPreferences() {
       ) : (
         <>
           {/* Allowed Themes */}
-          <div className="bg-slate-800 rounded-xl p-4 sm:p-6 border border-slate-700 shadow-lg">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 border border-gray-200 shadow-sm">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base sm:text-lg font-semibold text-white">Allowed Themes</h3>
+              <h3 className="text-base sm:text-lg font-semibold text-[#2B4570]">Allowed Themes</h3>
               <TooltipIcon
                 content="Select themes you want to encourage. Videos with these themes will be marked as suitable. Leave empty to allow all themes."
                 position="top"
               />
             </div>
-            <p className="text-xs sm:text-sm text-slate-400 mb-4">
+            <p className="text-xs sm:text-sm text-[#6B7280] mb-4">
               Videos with these themes will be marked as suitable for {selectedKidProfile?.name}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -233,10 +253,10 @@ export default function ContentPreferences() {
                 <button
                   key={theme}
                   onClick={() => toggleAllowedTheme(theme)}
-                  className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 touch-manipulation ${
+                  className={`px-3 sm:px-4 py-2 rounded-2xl text-xs sm:text-sm font-medium transition-all duration-200 touch-manipulation ${
                     preferences.allowed_themes.includes(theme)
-                      ? 'bg-green-500 text-white shadow-lg shadow-green-500/30 scale-105'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white hover:scale-105'
+                      ? 'bg-green-500 text-white shadow-md scale-105'
+                      : 'bg-gray-100 text-[#6B7280] hover:bg-gray-200 hover:text-[#2B4570] hover:scale-105'
                   }`}
                 >
                   {theme.charAt(0).toUpperCase() + theme.slice(1)}
@@ -246,15 +266,15 @@ export default function ContentPreferences() {
           </div>
 
           {/* Blocked Themes */}
-          <div className="bg-slate-800 rounded-xl p-4 sm:p-6 border border-slate-700 shadow-lg">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 border border-gray-200 shadow-sm">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base sm:text-lg font-semibold text-white">Blocked Themes</h3>
+              <h3 className="text-base sm:text-lg font-semibold text-[#2B4570]">Blocked Themes</h3>
               <TooltipIcon
                 content="Select themes you want to avoid. Videos with these themes will be flagged as unsuitable, regardless of safety scores."
                 position="top"
               />
             </div>
-            <p className="text-xs sm:text-sm text-slate-400 mb-4">
+            <p className="text-xs sm:text-sm text-[#6B7280] mb-4">
               Videos with these themes will be flagged as unsuitable for {selectedKidProfile?.name}
             </p>
             <div className="flex flex-wrap gap-2">
@@ -262,10 +282,10 @@ export default function ContentPreferences() {
                 <button
                   key={theme}
                   onClick={() => toggleBlockedTheme(theme)}
-                  className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 touch-manipulation ${
+                  className={`px-3 sm:px-4 py-2 rounded-2xl text-xs sm:text-sm font-medium transition-all duration-200 touch-manipulation ${
                     preferences.blocked_themes.includes(theme)
-                      ? 'bg-red-500 text-white shadow-lg shadow-red-500/30 scale-105'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white hover:scale-105'
+                      ? 'bg-red-500 text-white shadow-md scale-105'
+                      : 'bg-gray-100 text-[#6B7280] hover:bg-gray-200 hover:text-[#2B4570] hover:scale-105'
                   }`}
                 >
                   {theme.charAt(0).toUpperCase() + theme.slice(1)}
@@ -275,9 +295,9 @@ export default function ContentPreferences() {
           </div>
 
           {/* Safety Thresholds */}
-          <div className="bg-slate-800 rounded-xl p-4 sm:p-6 border border-slate-700 shadow-lg">
-            <h3 className="text-base sm:text-lg font-semibold text-white mb-4">Safety Thresholds</h3>
-            <p className="text-xs sm:text-sm text-slate-400 mb-6">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 border border-gray-200 shadow-sm">
+            <h3 className="text-base sm:text-lg font-semibold text-[#2B4570] mb-4">Safety Thresholds</h3>
+            <p className="text-xs sm:text-sm text-[#6B7280] mb-6">
               Videos exceeding these scores will be flagged for {selectedKidProfile?.name}
             </p>
 
@@ -286,7 +306,7 @@ export default function ContentPreferences() {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-slate-300">
+                    <label className="text-sm font-medium text-[#2B4570]">
                       Maximum Violence Score
                     </label>
                     <TooltipIcon
@@ -294,7 +314,7 @@ export default function ContentPreferences() {
                       position="top"
                     />
                   </div>
-                  <span className="text-lg font-bold text-white">
+                  <span className="text-lg font-bold text-[#2B4570]">
                     {preferences.max_violence_score}
                   </span>
                 </div>
@@ -307,9 +327,9 @@ export default function ContentPreferences() {
                     ...prev,
                     max_violence_score: parseInt(e.target.value)
                   }))}
-                  className="w-full h-3 sm:h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 touch-manipulation"
+                  className="w-full h-3 sm:h-2 bg-gray-200 rounded-2xl appearance-none cursor-pointer accent-[#8FA888] touch-manipulation"
                 />
-                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
                   <span>None (0)</span>
                   <span>Some (50)</span>
                   <span>High (100)</span>
@@ -320,7 +340,7 @@ export default function ContentPreferences() {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-slate-300">
+                    <label className="text-sm font-medium text-[#2B4570]">
                       Maximum Scary Score
                     </label>
                     <TooltipIcon
@@ -328,7 +348,7 @@ export default function ContentPreferences() {
                       position="top"
                     />
                   </div>
-                  <span className="text-lg font-bold text-white">
+                  <span className="text-lg font-bold text-[#2B4570]">
                     {preferences.max_scary_score}
                   </span>
                 </div>
@@ -341,9 +361,9 @@ export default function ContentPreferences() {
                     ...prev,
                     max_scary_score: parseInt(e.target.value)
                   }))}
-                  className="w-full h-3 sm:h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 touch-manipulation"
+                  className="w-full h-3 sm:h-2 bg-gray-200 rounded-2xl appearance-none cursor-pointer accent-[#8FA888] touch-manipulation"
                 />
-                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
                   <span>None (0)</span>
                   <span>Some (50)</span>
                   <span>Very (100)</span>
@@ -354,7 +374,7 @@ export default function ContentPreferences() {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-slate-300">
+                    <label className="text-sm font-medium text-[#2B4570]">
                       Maximum NSFW Score
                     </label>
                     <TooltipIcon
@@ -362,7 +382,7 @@ export default function ContentPreferences() {
                       position="top"
                     />
                   </div>
-                  <span className="text-lg font-bold text-white">
+                  <span className="text-lg font-bold text-[#2B4570]">
                     {preferences.max_nsfw_score}
                   </span>
                 </div>
@@ -375,9 +395,9 @@ export default function ContentPreferences() {
                     ...prev,
                     max_nsfw_score: parseInt(e.target.value)
                   }))}
-                  className="w-full h-3 sm:h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 touch-manipulation"
+                  className="w-full h-3 sm:h-2 bg-gray-200 rounded-2xl appearance-none cursor-pointer accent-[#8FA888] touch-manipulation"
                 />
-                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
                   <span>None (0)</span>
                   <span>Some (50)</span>
                   <span>Explicit (100)</span>
@@ -385,10 +405,10 @@ export default function ContentPreferences() {
               </div>
 
               {/* Profanity Toggle */}
-              <div className="flex items-center justify-between p-3 sm:p-4 bg-slate-900 rounded-lg">
+              <div className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-2xl">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <label className="text-xs sm:text-sm font-medium text-slate-300">
+                    <label className="text-xs sm:text-sm font-medium text-[#2B4570]">
                       Allow Profanity
                     </label>
                     <TooltipIcon
@@ -396,7 +416,7 @@ export default function ContentPreferences() {
                       position="top"
                     />
                   </div>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-gray-400">
                     Allow videos with mild language
                   </p>
                 </div>
@@ -406,7 +426,7 @@ export default function ContentPreferences() {
                     allow_profanity: !prev.allow_profanity
                   }))}
                   className={`relative inline-flex h-7 w-12 sm:h-6 sm:w-11 items-center rounded-full transition-colors touch-manipulation ml-4 ${
-                    preferences.allow_profanity ? 'bg-blue-500' : 'bg-slate-600'
+                    preferences.allow_profanity ? 'bg-[#8FA888]' : 'bg-gray-300'
                   }`}
                   aria-label="Toggle profanity"
                 >
@@ -425,7 +445,7 @@ export default function ContentPreferences() {
             <button
               onClick={savePreferences}
               disabled={saving}
-              className="w-full py-3 sm:py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-base sm:text-lg transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 touch-manipulation"
+              className="w-full py-3 sm:py-4 bg-[#8FA888] hover:bg-[#7a9377] rounded-2xl font-semibold text-base sm:text-lg transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 touch-manipulation text-white"
             >
               <Save className="w-5 h-5" />
               {saving ? 'Saving...' : 'Save Preferences'}
@@ -434,10 +454,10 @@ export default function ContentPreferences() {
 
           {/* Success/Error Message */}
           {message && (
-            <div className={`flex items-center gap-3 p-4 rounded-lg border ${
+            <div className={`flex items-center gap-3 p-4 rounded-2xl border ${
               message.type === 'success'
-                ? 'bg-green-500/10 border-green-500 text-green-400'
-                : 'bg-red-500/10 border-red-500 text-red-400'
+                ? 'bg-green-50 border-green-300 text-green-600'
+                : 'bg-red-50 border-red-300 text-red-600'
             }`}>
               {message.type === 'success' ? (
                 <CheckCircle2 className="w-5 h-5" />

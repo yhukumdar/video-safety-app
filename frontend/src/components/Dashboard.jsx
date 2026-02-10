@@ -5,12 +5,15 @@ import { useAuth } from '../contexts/AuthContext'
 import Navigation from './Navigation'
 import KidProfiles from './KidProfiles'
 import ContentPreferences from './ContentPreferences'
+import VideoDetail from './VideoDetail'
+import VideoHistory from './VideoHistory'
 import { LoadingSpinner, LoadingCard } from './LoadingSpinner'
 import Tooltip, { TooltipIcon } from './Tooltip'
 
 export default function Dashboard() {
   const { user, parentProfile } = useAuth()
   const [currentView, setCurrentView] = useState('dashboard')
+  const [viewingReportId, setViewingReportId] = useState(null)
 
   // Search tab state
   const [activeTab, setActiveTab] = useState('url') // 'url', 'name', 'image'
@@ -143,12 +146,19 @@ export default function Dashboard() {
       }
   
       const result = await response.json()
-      
+
       setUploadStatus('success')
       setYoutubeUrl('')
-      fetchReports()
-      
-      setTimeout(() => setUploadStatus(null), 3000)
+
+      // Redirect to video detail page to watch analysis progress
+      if (result.report_id) {
+        setTimeout(() => {
+          setViewingReportId(result.report_id)
+        }, 1000)
+      } else {
+        fetchReports()
+        setTimeout(() => setUploadStatus(null), 3000)
+      }
     } catch (err) {
       console.error('Analysis error:', err)
       setError(err.message)
@@ -200,32 +210,6 @@ export default function Dashboard() {
     }))
   }
 
-  // Retry a failed report
-  const handleRetryReport = async (reportId) => {
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/retry/${reportId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }))
-        setError(errorData.detail || 'Failed to retry')
-        return
-      }
-
-      // Optimistically update the report status in state
-      setReports(prev => prev.map(r =>
-        r.id === reportId ? { ...r, status: 'pending', error_message: null } : r
-      ))
-
-      // Refresh reports after a short delay
-      setTimeout(() => fetchReports(), 2000)
-    } catch (err) {
-      console.error('Retry error:', err)
-      setError('Failed to retry. Please try again.')
-    }
-  }
 
   // Helper to parse and linkify timestamps in text
   const linkifyTimestamps = (text, videoUrl) => {
@@ -510,9 +494,16 @@ export default function Dashboard() {
       setSearchQuery('')
       setSelectedImage(null)
       setActiveTab('url') // Switch back to URL tab
-      fetchReports()
 
-      setTimeout(() => setUploadStatus(null), 3000)
+      // Redirect to video detail page to watch analysis progress
+      if (result.report_id) {
+        setTimeout(() => {
+          setViewingReportId(result.report_id)
+        }, 1000)
+      } else {
+        fetchReports()
+        setTimeout(() => setUploadStatus(null), 3000)
+      }
     } catch (err) {
       console.error('❌ Full error object:', err)
       console.error('❌ Error message:', err.message)
@@ -523,36 +514,59 @@ export default function Dashboard() {
     }
   }
 
-  // ========================================
   // RETURN STATEMENT STARTS HERE
   // ========================================
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
+    <div className="min-h-screen bg-[#F9F8F6]">
       {/* Navigation */}
-      <Navigation currentView={currentView} setCurrentView={setCurrentView} />
+      <Navigation
+        currentView={currentView}
+        setCurrentView={setCurrentView}
+        onViewChange={() => setViewingReportId(null)}
+      />
 
       {/* Main Content */}
       <div className="max-w-6xl mx-auto px-4 pb-8">
-        
+
+        {/* Video Detail View */}
+        {viewingReportId && (
+          <VideoDetail reportId={viewingReportId} onBack={() => setViewingReportId(null)} />
+        )}
+
         {/* Dashboard View */}
-        {currentView === 'dashboard' && (
+        {currentView === 'dashboard' && !viewingReportId && (
           <>
+            {/* Hero Section */}
+            <div className="mb-12">
+              <h1 className="text-4xl sm:text-5xl font-bold text-[#2B4570] mb-4 leading-tight">
+                Know what your kids are watching
+              </h1>
+              <p className="text-lg text-[#6B7280] max-w-2xl">
+                AI-powered video analysis to keep your children safe online. Analyze YouTube videos for safety, appropriateness, and age-suitability.
+              </p>
+            </div>
+
             {/* Search/Upload Section with Tabs */}
-            <div className="bg-slate-800 rounded-xl p-4 sm:p-6 md:p-8 mb-8 md:mb-12 border border-slate-700">
-              <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">Add Video for Analysis</h2>
+            <div className="bg-white rounded-3xl p-6 sm:p-8 mb-8 border-2 border-gray-100 shadow-xl hover:shadow-2xl transition-shadow duration-300">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-12 h-12 bg-gradient-to-br from-[#FF9C8A] to-[#FF7B6B] rounded-xl flex items-center justify-center shadow-lg">
+                  <Search className="w-6 h-6 text-white" />
+                </div>
+                <h2 className="text-2xl font-bold text-[#2B4570]">Analyze a Video</h2>
+              </div>
 
               {/* Tabs */}
-              <div className="flex gap-2 mb-6 border-b border-slate-700">
+              <div className="flex gap-2 mb-6 bg-gray-50 rounded-2xl p-1">
                 <button
                   onClick={() => {
                     setActiveTab('url')
                     setSearchResults([])
                     setError(null)
                   }}
-                  className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 font-medium rounded-xl transition-all ${
                     activeTab === 'url'
-                      ? 'text-blue-400 border-b-2 border-blue-400'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-white text-[#2B4570] shadow-md scale-[1.02]'
+                      : 'text-[#6B7280] hover:text-[#2B4570] hover:bg-white/50'
                   }`}
                 >
                   <LinkIcon className="w-4 h-4" />
@@ -565,10 +579,10 @@ export default function Dashboard() {
                     setSearchResults([])
                     setError(null)
                   }}
-                  className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 font-medium rounded-xl transition-all ${
                     activeTab === 'name'
-                      ? 'text-blue-400 border-b-2 border-blue-400'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-white text-[#2B4570] shadow-md scale-[1.02]'
+                      : 'text-[#6B7280] hover:text-[#2B4570] hover:bg-white/50'
                   }`}
                 >
                   <Search className="w-4 h-4" />
@@ -581,10 +595,10 @@ export default function Dashboard() {
                     setSearchResults([])
                     setError(null)
                   }}
-                  className={`flex items-center gap-2 px-4 py-3 font-medium transition-all ${
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 font-medium rounded-xl transition-all ${
                     activeTab === 'image'
-                      ? 'text-blue-400 border-b-2 border-blue-400'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-white text-[#2B4570] shadow-md scale-[1.02]'
+                      : 'text-[#6B7280] hover:text-[#2B4570] hover:bg-white/50'
                   }`}
                 >
                   <Camera className="w-4 h-4" />
@@ -598,7 +612,7 @@ export default function Dashboard() {
                 {/* URL Tab */}
                 {activeTab === 'url' && (
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                    <label className="block text-sm font-medium text-[#2B4570] mb-2">
                       YouTube Video URL
                     </label>
                     <input
@@ -611,17 +625,20 @@ export default function Dashboard() {
                           handleYouTubeSubmit()
                         }
                       }}
-                      className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-all mb-2"
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-2xl text-[#2B4570] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF9C8A] focus:border-transparent transition-all mb-2"
                     />
-                    <p className="text-sm text-slate-500 mb-4">
+                    <p className="text-sm text-[#6B7280] mb-2">
                       Paste a YouTube video URL to analyze its content
+                    </p>
+                    <p className="text-xs text-[#FF9C8A] mb-4">
+                      Analysis usually takes 2-3 minutes. We'll show results here when ready.
                     </p>
                     <button
                       onClick={handleYouTubeSubmit}
                       disabled={!youtubeUrl || uploading || !parentProfile}
-                      className="w-full py-3 sm:py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-base sm:text-lg transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                      className="w-full py-3 sm:py-4 bg-gradient-to-r from-[#FF9C8A] to-[#FF7B6B] hover:from-[#7a9377] hover:to-[#6b8468] rounded-2xl font-bold text-base sm:text-lg transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 touch-manipulation text-white"
                     >
-                      {uploading ? 'Analyzing...' : 'Analyze Video'}
+                      {uploading ? 'Analyzing...' : '🔍 Analyze Video'}
                     </button>
                   </div>
                 )}
@@ -629,7 +646,7 @@ export default function Dashboard() {
                 {/* Search by Name Tab */}
                 {activeTab === 'name' && (
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                    <label className="block text-sm font-medium text-[#2B4570] mb-2">
                       Search YouTube Videos
                     </label>
                     <div className="flex gap-2">
@@ -643,17 +660,17 @@ export default function Dashboard() {
                             handleSearchByName()
                           }
                         }}
-                        className="flex-1 px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-all"
+                        className="flex-1 px-4 py-3 bg-gray-50 border border-gray-300 rounded-2xl text-[#2B4570] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#FF9C8A] focus:border-transparent transition-all"
                       />
                       <button
                         onClick={handleSearchByName}
                         disabled={!searchQuery || searching}
-                        className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+                        className="px-6 py-3 bg-[#FF9C8A] hover:bg-[#7a9377] rounded-2xl font-semibold transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation text-white"
                       >
                         {searching ? <LoadingSpinner size="sm" /> : <Search className="w-5 h-5" />}
                       </button>
                     </div>
-                    <p className="text-sm text-slate-500 mt-2">
+                    <p className="text-sm text-[#6B7280] mt-2">
                       Search for videos by name, channel, or keywords
                     </p>
                   </div>
@@ -662,7 +679,7 @@ export default function Dashboard() {
                 {/* Search by Image Tab */}
                 {activeTab === 'image' && (
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                    <label className="block text-sm font-medium text-[#2B4570] mb-2">
                       Upload Scene or Screenshot
                     </label>
                     <div className="flex flex-col sm:flex-row gap-2">
@@ -686,7 +703,7 @@ export default function Dashboard() {
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={searching}
-                        className="flex-1 py-2.5 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="flex-1 py-2.5 px-4 bg-gray-100 hover:bg-gray-200 rounded-2xl text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-[#2B4570]"
                       >
                         <Upload className="w-4 h-4" />
                         <span className="hidden sm:inline">Choose Image</span>
@@ -697,7 +714,7 @@ export default function Dashboard() {
                       <button
                         onClick={() => cameraInputRef.current?.click()}
                         disabled={searching}
-                        className="flex-1 py-2.5 px-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg text-sm font-semibold transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="flex-1 py-2.5 px-4 bg-[#FF9C8A] hover:bg-[#7a9377] rounded-2xl text-sm font-semibold transition-all duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-white"
                       >
                         {searching ? <LoadingSpinner size="sm" /> : (
                           <>
@@ -708,12 +725,12 @@ export default function Dashboard() {
                         )}
                       </button>
                     </div>
-                    <p className="text-xs text-slate-400 mt-2">
+                    <p className="text-xs text-[#6B7280] mt-2">
                       💡 Camera button opens camera on mobile, file picker on desktop
                     </p>
                     {selectedImage && (
-                      <div className="mt-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
-                        <p className="text-sm text-green-300">
+                      <div className="mt-3 p-3 bg-green-50 border border-green-300 rounded-2xl">
+                        <p className="text-sm text-green-600">
                           ✓ Selected: {selectedImage.name}
                         </p>
                       </div>
@@ -724,53 +741,58 @@ export default function Dashboard() {
 
               {/* Status Messages */}
               {uploading && (
-                <div className="flex items-center justify-center p-4 sm:p-6 bg-blue-500/10 rounded-lg border border-blue-500 mt-4">
-                  <LoadingSpinner size="md" className="mr-3" />
-                  <p className="text-blue-400 text-sm sm:text-base">Analyzing video...</p>
+                <div className="p-4 sm:p-6 bg-blue-50 rounded-2xl border border-blue-300 mt-4">
+                  <div className="flex items-center justify-center mb-2">
+                    <LoadingSpinner size="md" className="mr-3" />
+                    <p className="text-blue-600 text-sm sm:text-base font-medium">Analyzing video...</p>
+                  </div>
+                  <p className="text-xs text-blue-600/80 text-center">
+                    Our AI is carefully reviewing the content. This typically takes 2-3 minutes.
+                  </p>
                 </div>
               )}
 
               {searching && (
-                <div className="flex items-center justify-center p-4 sm:p-6 bg-blue-500/10 rounded-lg border border-blue-500 mt-4">
+                <div className="flex items-center justify-center p-4 sm:p-6 bg-blue-50 rounded-2xl border border-blue-300 mt-4">
                   <LoadingSpinner size="md" className="mr-3" />
-                  <p className="text-blue-400 text-sm sm:text-base">Searching...</p>
+                  <p className="text-blue-600 text-sm sm:text-base">Searching...</p>
                 </div>
               )}
 
               {uploadStatus === 'success' && (
-                <div className="flex items-center justify-center p-6 bg-green-500/10 rounded-lg border border-green-500 mt-4">
-                  <CheckCircle className="w-6 h-6 text-green-400 mr-3" />
-                  <p className="text-green-400">Analysis started successfully!</p>
+                <div className="flex items-center justify-center p-6 bg-green-50 rounded-2xl border border-green-300 mt-4">
+                  <CheckCircle className="w-6 h-6 text-green-600 mr-3" />
+                  <p className="text-green-600">Analysis started successfully!</p>
                 </div>
               )}
 
               {error && (
-                <div className="flex items-center justify-center p-6 bg-red-500/10 rounded-lg border border-red-500 mt-4">
-                  <XCircle className="w-6 h-6 text-red-400 mr-3" />
-                  <p className="text-red-400">{error}</p>
+                <div className="flex items-center justify-center p-6 bg-red-50 rounded-2xl border border-red-300 mt-4">
+                  <XCircle className="w-6 h-6 text-red-600 mr-3" />
+                  <p className="text-red-600">{error}</p>
                 </div>
               )}
 
               {/* Search Results */}
               {searchResults.length > 0 && (activeTab === 'name' || activeTab === 'image') && (
                 <div className="mt-6">
-                  <h3 className="text-lg font-semibold mb-4">Search Results ({searchResults.length})</h3>
+                  <h3 className="text-lg font-semibold mb-4 text-[#2B4570]">Search Results ({searchResults.length})</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
                     {searchResults.map((video) => (
                       <div
                         key={video.video_id}
-                        className="bg-slate-900 rounded-lg p-4 border border-slate-700 hover:border-blue-500 transition-all cursor-pointer"
+                        className="bg-gray-50 rounded-2xl p-4 border border-gray-200 hover:border-[#FF9C8A] hover:shadow-md transition-all cursor-pointer"
                         onClick={() => handleAnalyzeFromSearch(video.video_url)}
                       >
                         <img
                           src={video.thumbnail}
                           alt={video.title}
-                          className="w-full h-32 object-cover rounded mb-3"
+                          className="w-full h-32 object-cover rounded-2xl mb-3"
                         />
-                        <h4 className="font-medium text-sm mb-1 line-clamp-2">{video.title}</h4>
-                        <p className="text-xs text-slate-400">{video.channel}</p>
+                        <h4 className="font-medium text-sm mb-1 line-clamp-2 text-[#2B4570]">{video.title}</h4>
+                        <p className="text-xs text-[#6B7280]">{video.channel}</p>
                         <button
-                          className="mt-3 w-full py-2 px-4 bg-blue-500 hover:bg-blue-600 rounded text-sm font-medium transition-all"
+                          className="mt-3 w-full py-2 px-4 bg-[#FF9C8A] hover:bg-[#7a9377] rounded-2xl text-sm font-medium transition-all text-white"
                           onClick={(e) => {
                             e.stopPropagation()
                             handleAnalyzeFromSearch(video.video_url)
@@ -785,453 +807,43 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Theme Filter Section */}
-            {reports.length > 0 && (
-              <div className="bg-slate-800 rounded-xl p-4 sm:p-6 mb-6 border border-slate-700">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-                  <h3 className="text-base sm:text-lg font-semibold text-white">Filter by Theme</h3>
-                  {selectedThemes.length > 0 && (
-                    <button
-                      onClick={clearFilters}
-                      className="text-xs sm:text-sm text-slate-400 hover:text-white transition-colors self-start sm:self-auto touch-manipulation"
-                    >
-                      Clear Filters ({selectedThemes.length})
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {['educational', 'animated', 'scary', 'religious', 'lgbtq', 'political', 'musical', 'action', 'romantic', 'live-action'].map(theme => (
-                    <button
-                      key={theme}
-                      onClick={() => toggleTheme(theme)}
-                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all duration-200 touch-manipulation ${
-                        selectedThemes.includes(theme)
-                          ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg scale-105'
-                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white hover:scale-105'
-                      }`}
-                    >
-                      {theme.charAt(0).toUpperCase() + theme.slice(1)}
-                    </button>
-                  ))}
-                </div>
-                
-                {selectedThemes.length > 0 && (
-                  <p className="text-sm text-slate-400 mt-3">
-                    Showing videos with: {selectedThemes.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(', ')}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Kid Profile Filter */}
-            {kidProfiles.length > 0 && (
-              <div className="bg-slate-800 rounded-xl p-4 sm:p-6 mb-6 border border-slate-700">
-                <label className="block text-xs sm:text-sm font-medium text-slate-300 mb-3">
-                  Show Warnings For
-                </label>
-                <select
-                  value={selectedKidFilter}
-                  onChange={(e) => setSelectedKidFilter(e.target.value)}
-                  className="w-full px-3 sm:px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-sm sm:text-base text-white focus:outline-none focus:border-blue-500 touch-manipulation"
-                >
-                  <option value="all">All Kids</option>
-                  {kidProfiles.map(kid => (
-                    <option key={kid.id} value={kid.id}>
-                      {kid.name} ({kid.age} years old)
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Reports Section */}
-            <div>
-              <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">Analysis Reports</h2>
-
-              {loadingReports ? (
-                <LoadingCard message="Loading your video reports..." />
-              ) : (() => {
-                // Filter reports based on selected themes
-                const filteredReports = selectedThemes.length === 0
-                  ? reports
-                  : reports.filter(report => {
-                      const reportThemes = report.analysis_result?.themes || []
-                      return selectedThemes.some(selectedTheme =>
-                        reportThemes.includes(selectedTheme)
-                      )
-                    })
-
-                // Results count
-                const resultsCount = selectedThemes.length > 0 && filteredReports.length > 0 && (
-                  <p className="text-sm text-slate-400 mb-4">
-                    Showing {filteredReports.length} of {reports.length} video{reports.length !== 1 ? 's' : ''}
-                  </p>
-                )
-
-                return (
-                  <>
-                    {resultsCount}
-
-                    {filteredReports.length === 0 ? (
-                      <div className="text-center py-12 bg-slate-800 rounded-lg border border-slate-700">
-                        <AlertTriangle className="w-12 h-12 text-slate-500 mx-auto mb-4" />
-                        <p className="text-slate-400">
-                          {reports.length === 0 
-                            ? "No reports yet. Upload a video to get started."
-                            : "No videos match the selected filters. Try different themes."
-                          }
-                        </p>
-                        {selectedThemes.length > 0 && (
-                          <button
-                            onClick={clearFilters}
-                            className="mt-4 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
-                          >
-                            Clear Filters
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                        {filteredReports.map((report) => {
-                    const analysisResult = report.analysis_result && typeof report.analysis_result === 'object' 
-                      ? report.analysis_result 
-                      : null
-
-                    return (
-                      <div key={report.id} className="bg-slate-800 rounded-xl p-4 sm:p-6 border border-slate-700 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 transform hover:-translate-y-1">
-                        {/* Video Title */}
-                        <h3 className="font-semibold text-base sm:text-lg mb-3 text-white line-clamp-2 sm:truncate">
-                          {report.video_title || 'Untitled Video'}
-                        </h3>
-
-                        {/* Status Badge */}
-                        <div className="mb-4">
-                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(report.status)}`}>
-                            {report.status || 'unknown'}
-                          </span>
-                        </div>
-
-                        {/* Safety Score */}
-                        {report.status === 'completed' && analysisResult && (
-                          <>
-                            <div className="bg-slate-900 rounded-lg p-4 mb-4">
-                              <div className="flex items-center gap-2 mb-2">
-                                <p className="text-xs text-slate-400">Overall Safety Score</p>
-                                <TooltipIcon
-                                  content="Higher scores (80+) = safer content. Lower scores indicate more potentially inappropriate content."
-                                  position="top"
-                                />
-                              </div>
-                              <div className="flex items-center">
-                                <div className="flex-1 bg-slate-700 rounded-full h-3 overflow-hidden">
-                                  <div
-                                    className={`h-full transition-all ${
-                                      analysisResult.safety_score >= 80 ? 'bg-green-500' :
-                                      analysisResult.safety_score >= 50 ? 'bg-yellow-500' :
-                                      'bg-red-500'
-                                    }`}
-                                    style={{ width: `${analysisResult.safety_score || 0}%` }}
-                                  />
-                                </div>
-                                <span className="ml-3 font-bold text-lg">
-                                  {analysisResult.safety_score || 0}/100
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Score Breakdown */}
-                            <div className="grid grid-cols-2 gap-3 mb-4">
-                              <Tooltip content="0-20: Minimal violence, 21-50: Moderate violence, 51+: High violence content">
-                                <div className="bg-slate-900 rounded-lg p-3 text-center cursor-help">
-                                  <p className="text-xs text-slate-400 mb-1">Violence</p>
-                                  <p className={`text-lg font-bold ${
-                                    (analysisResult.violence_score || 0) <= 20 ? 'text-green-400' :
-                                    (analysisResult.violence_score || 0) <= 50 ? 'text-orange-400' :
-                                    'text-red-600'
-                                  }`}>
-                                    {analysisResult.violence_score || 0}
-                                  </p>
-                                </div>
-                              </Tooltip>
-                              <Tooltip content="0-20: Family-friendly, 21-50: Mild suggestive content, 51+: Explicit content">
-                                <div className="bg-slate-900 rounded-lg p-3 text-center cursor-help">
-                                  <p className="text-xs text-slate-400 mb-1">NSFW</p>
-                                  <p className={`text-lg font-bold ${
-                                    (analysisResult.nsfw_score || 0) <= 20 ? 'text-green-400' :
-                                    (analysisResult.nsfw_score || 0) <= 50 ? 'text-yellow-400' :
-                                    'text-red-400'
-                                  }`}>
-                                    {analysisResult.nsfw_score || 0}
-                                  </p>
-                                </div>
-                              </Tooltip>
-                              <Tooltip content="0-20: Not scary, 21-50: Mildly frightening, 51+: Very scary or intense">
-                                <div className="bg-slate-900 rounded-lg p-3 text-center cursor-help">
-                                  <p className="text-xs text-slate-400 mb-1">Scary</p>
-                                  <p className={`text-lg font-bold ${
-                                    (analysisResult.scary_score || 0) <= 20 ? 'text-green-400' :
-                                    (analysisResult.scary_score || 0) <= 50 ? 'text-yellow-400' :
-                                    'text-red-400'
-                                  }`}>
-                                    {analysisResult.scary_score || 0}
-                                  </p>
-                                </div>
-                              </Tooltip>
-                              <Tooltip content="Indicates whether the video contains profanity or inappropriate language">
-                                <div className="bg-slate-900 rounded-lg p-3 text-center cursor-help">
-                                  <p className="text-xs text-slate-400 mb-1">Profanity</p>
-                                  <p className={`text-lg font-bold ${
-                                    !analysisResult.profanity_detected ? 'text-green-400' : 'text-red-400'
-                                  }`}>
-                                    {analysisResult.profanity_detected ? 'Yes' : 'No'}
-                                  </p>
-                                </div>
-                              </Tooltip>
-                            </div>
-
-                            {/* Themes Section - NEW */}
-                            {analysisResult.themes && analysisResult.themes.length > 0 && (
-                              <div className="bg-slate-900 rounded-lg p-3 mb-4">
-                                <p className="text-xs text-slate-400 mb-2">Content Themes</p>
-                                <div className="flex flex-wrap gap-1">
-                                  {analysisResult.themes.map((theme, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-2 py-1 text-xs bg-blue-500/20 text-blue-300 rounded border border-blue-500/30"
-                                    >
-                                      {theme}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Age Recommendation */}
-                            {analysisResult.age_recommendation && (
-                              <Tooltip content="Suggested minimum age based on content analysis including violence, scary elements, NSFW content, and profanity">
-                                <div className="bg-purple-500/10 border border-purple-500 rounded-lg p-3 mb-4 cursor-help">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-lg">🎂</span>
-                                    <span className="text-sm font-medium text-purple-300">
-                                      Recommended for ages {analysisResult.age_recommendation}+
-                                    </span>
-                                  </div>
-                                </div>
-                              </Tooltip>
-                            )}
-
-                            {/* Preference Warnings */}
-                            {(() => {
-                              const prefWarnings = checkVideoAgainstPreferences(report)
-                              
-                              // Filter warnings by selected kid
-                              const filteredWarnings = selectedKidFilter !== 'all'
-                                ? prefWarnings.filter(w => w.kid.id === selectedKidFilter)
-                                : prefWarnings
-                              
-                              if (filteredWarnings.length === 0) return null
-                              
-                              return (
-                                <div className="space-y-2 mb-4">
-                                  {filteredWarnings.map((warning, idx) => (
-                                    <div
-                                      key={idx}
-                                      className={`p-3 rounded-lg text-sm ${
-                                        warning.suitable
-                                          ? 'bg-green-500/10 border border-green-500 text-green-400'
-                                          : 'bg-red-500/10 border border-red-500 text-red-400'
-                                      }`}
-                                    >
-                                      {warning.suitable ? (
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-lg">✅</span>
-                                          <span className="font-medium">
-                                            Suitable for {warning.kid.name} ({warning.kid.age} years)
-                                          </span>
-                                        </div>
-                                      ) : (
-                                        <div>
-                                          <div className="flex items-center gap-2 mb-2">
-                                            <span className="text-lg">⚠️</span>
-                                            <span className="font-medium">
-                                              Not suitable for {warning.kid.name} ({warning.kid.age} years)
-                                            </span>
-                                          </div>
-                                          <ul className="list-disc list-inside text-xs space-y-1 ml-6">
-                                            {warning.warnings.map((w, i) => (
-                                              <li key={i}>{w}</li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              )
-                            })()}
-
-                            {/* Toggle Button */}
-                            <button
-                              onClick={() => toggleReportDetails(report.id)}
-                              className="w-full py-2 px-4 bg-slate-700 hover:bg-gradient-to-r hover:from-blue-600 hover:to-purple-600 rounded-lg text-xs sm:text-sm text-slate-300 hover:text-white transition-all duration-200 flex items-center justify-center touch-manipulation font-medium"
-                            >
-                              {expandedReports[report.id] ? 'Hide Details ▲' : 'Show Details ▼'}
-                            </button>
-
-                            {/* Expanded Details */}
-                            {expandedReports[report.id] && (
-                              <div className="mt-4 space-y-3 text-sm">
-                                {/* Expandable Summary */}
-                                {analysisResult.summary &&
-                                 analysisResult.summary.trim() &&
-                                 !analysisResult.summary.includes('Video content analyzed') && (
-                                  <div className="bg-slate-900 rounded-lg p-3">
-                                    <p className="text-xs text-slate-400 mb-1">Summary</p>
-                                    <div>
-                                      <p className="text-slate-200">
-                                        {expandedSummaries[report.id] || analysisResult.summary.length <= 50
-                                          ? analysisResult.summary
-                                          : `${analysisResult.summary.substring(0, 50)}...`}
-                                      </p>
-                                      {analysisResult.summary.length > 50 && (
-                                        <button
-                                          onClick={() => toggleSummary(report.id)}
-                                          className="mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
-                                        >
-                                          {expandedSummaries[report.id] ? 'Show Less ▲' : 'Show More ▼'}
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {analysisResult.concerns && analysisResult.concerns.length > 0 && (
-                                  <div className="bg-slate-900 rounded-lg p-3">
-                                    <p className="text-xs text-slate-400 mb-2">Concerns</p>
-                                    <ul className="list-disc list-inside space-y-2">
-                                      {(expandedConcerns[report.id]
-                                        ? analysisResult.concerns
-                                        : analysisResult.concerns.slice(0, 3)
-                                      ).map((concern, idx) => (
-                                        <li key={idx} className="text-red-400">
-                                          <span>{linkifyTimestamps(concern, report.video_url)}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                    {analysisResult.concerns.length > 3 && (
-                                      <button
-                                        onClick={() => toggleConcern(report.id)}
-                                        className="mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium"
-                                      >
-                                        {expandedConcerns[report.id] ? 'Show Less ▲' : `Show More (${analysisResult.concerns.length - 3} more) ▼`}
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                                {analysisResult.positive_aspects && analysisResult.positive_aspects.length > 0 && (
-                                  <div className="bg-slate-900 rounded-lg p-3">
-                                    <p className="text-xs text-slate-400 mb-2">Positive Aspects</p>
-                                    <ul className="list-disc list-inside space-y-2">
-                                      {(expandedPositives[report.id]
-                                        ? analysisResult.positive_aspects
-                                        : analysisResult.positive_aspects.slice(0, 3)
-                                      ).map((aspect, idx) => (
-                                        <li key={idx} className="text-green-400">
-                                          <span>{linkifyTimestamps(aspect, report.video_url)}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                    {analysisResult.positive_aspects.length > 3 && (
-                                      <button
-                                        onClick={() => togglePositive(report.id)}
-                                        className="mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium"
-                                      >
-                                        {expandedPositives[report.id] ? 'Show Less ▲' : `Show More (${analysisResult.positive_aspects.length - 3} more) ▼`}
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </>
-                        )}
-
-                        {/* Pending/Processing State */}
-                        {(report.status === 'pending' || report.status === 'processing') && (
-                          <div className="text-center py-6">
-                            <LoadingSpinner size="lg" className="mx-auto mb-3" />
-                            <p className="text-slate-400 text-xs sm:text-sm">
-                              {report.status === 'pending' ? 'Queued for analysis...' : 'Analyzing video...'}
-                            </p>
-                            <p className="text-slate-500 text-xs mt-1">This may take a few minutes</p>
-                          </div>
-                        )}
-
-                        {/* Failed State */}
-                        {report.status === 'failed' && (
-                          <div className="text-center py-6">
-                            <XCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
-                            <p className="text-red-400 text-sm font-medium">Analysis failed</p>
-                            {report.error_message && (
-                              <p className="text-xs text-red-300 mt-2 max-w-md mx-auto">
-                                {report.error_message.length > 120 ? report.error_message.substring(0, 120) + '...' : report.error_message}
-                              </p>
-                            )}
-                            <button
-                              onClick={() => handleRetryReport(report.id)}
-                              className="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-medium text-white transition-all"
-                            >
-                              Retry Analysis
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Timestamp */}
-                        <p className="text-xs text-slate-500 mt-4">
-                          {new Date(report.created_at).toLocaleString()}
-                        </p>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </>
-          )
-        })()}
-      </div>
     </>
   )}
+
+  {/* Video History View */}
+        {currentView === 'history' && !viewingReportId && (
+          <VideoHistory onViewDetails={setViewingReportId} />
+        )}
 
   {/* Kid Profiles View */}
         {currentView === 'profiles' && (
           <div>
-            <h1 className="text-3xl font-bold text-white mb-6">Kid Profiles</h1>
+            <h1 className="text-3xl font-bold text-[#2B4570] mb-6">Kid Profiles</h1>
             <KidProfiles />
           </div>
         )}
 
         {/* Account View */}
         {currentView === 'account' && (
-          <div className="bg-slate-800 rounded-lg p-8 border border-slate-700">
-            <h1 className="text-3xl font-bold text-white mb-6">Account Settings</h1>
+          <div className="bg-white rounded-2xl p-8 border border-gray-200 shadow-sm">
+            <h1 className="text-3xl font-bold text-[#2B4570] mb-6">Account Settings</h1>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Email</label>
+                <label className="block text-sm font-medium text-[#2B4570] mb-2">Email</label>
                 <input
                   type="email"
                   value={user?.email || ''}
                   disabled
-                  className="w-full px-4 py-2 bg-slate-900 border border-slate-600 rounded text-slate-400"
+                  className="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-2xl text-[#6B7280]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Full Name</label>
+                <label className="block text-sm font-medium text-[#2B4570] mb-2">Full Name</label>
                 <input
                   type="text"
                   value={parentProfile?.full_name || ''}
                   disabled
-                  className="w-full px-4 py-2 bg-slate-900 border border-slate-600 rounded text-slate-400"
+                  className="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-2xl text-[#6B7280]"
                 />
               </div>
             </div>
@@ -1241,9 +853,347 @@ export default function Dashboard() {
         {/* Preferences View */}
         {currentView === 'preferences' && (
         <div>
-            <h1 className="text-3xl font-bold text-white mb-6">Content Preferences</h1>
+            <h1 className="text-3xl font-bold text-[#2B4570] mb-6">Content Preferences</h1>
             <ContentPreferences />
         </div>
+        )}
+
+        {/* Articles View */}
+        {currentView === 'articles' && (
+          <div>
+            <div className="mb-8">
+              <h1 className="text-4xl font-bold text-[#2B4570] mb-3">Safety Articles & Resources</h1>
+              <p className="text-lg text-[#6B7280]">Expert advice on keeping your children safe online</p>
+            </div>
+
+            {/* Featured Article */}
+            <div className="bg-gradient-to-br from-[#2B4570] to-[#1e3151] rounded-2xl p-8 mb-8 text-white">
+              <span className="inline-block px-3 py-1 bg-[#FF9C8A] rounded-full text-xs font-medium mb-4">Featured</span>
+              <h2 className="text-3xl font-bold mb-3">Understanding Age-Appropriate Content</h2>
+              <p className="text-gray-200 mb-6">A comprehensive guide to selecting videos that match your child's developmental stage and emotional maturity.</p>
+              <button className="px-6 py-3 bg-white text-[#2B4570] rounded-2xl font-semibold hover:bg-gray-100 transition-colors">
+                Read Article →
+              </button>
+            </div>
+
+            {/* Article Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[
+                { title: "What Parents Need to Know About YouTube Kids", category: "Platform Safety", time: "5 min read" },
+                { title: "Setting Healthy Screen Time Boundaries", category: "Parenting Tips", time: "7 min read" },
+                { title: "Recognizing Red Flags in Children's Videos", category: "Safety Guide", time: "6 min read" },
+                { title: "How AI Analyzes Video Content", category: "Technology", time: "4 min read" },
+                { title: "Creating a Family Media Plan", category: "Parenting Tips", time: "8 min read" },
+                { title: "Understanding Content Ratings", category: "Education", time: "5 min read" },
+              ].map((article, idx) => (
+                <div key={idx} className="bg-white rounded-2xl p-6 border border-gray-200 hover:border-[#FF9C8A] hover:shadow-lg transition-all cursor-pointer">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xs font-medium text-[#FF9C8A] bg-green-50 px-3 py-1 rounded-full">{article.category}</span>
+                    <span className="text-xs text-[#6B7280]">{article.time}</span>
+                  </div>
+                  <h3 className="font-bold text-lg text-[#2B4570] mb-3">{article.title}</h3>
+                  <button className="text-[#FF9C8A] font-medium text-sm hover:text-[#7a9377]">
+                    Read more →
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Suggestions View */}
+        {currentView === 'suggestions' && (
+          <div>
+            <div className="mb-8">
+              <h1 className="text-4xl font-bold text-[#2B4570] mb-3">Curated Video Lists</h1>
+              <p className="text-lg text-[#6B7280]">Age-appropriate, parent-approved video suggestions for your family</p>
+            </div>
+
+            {/* Educational Videos for Ages 3-5 */}
+            <div className="mb-12">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-[#2B4570] mb-1">Educational Videos for Ages 3-5</h2>
+                  <p className="text-sm text-[#6B7280]">Gentle learning content for preschoolers</p>
+                </div>
+                <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-xs font-medium">12 videos</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[
+                  { title: "Alphabet Adventure", channel: "PBS Kids", duration: "8:45", safety: 98 },
+                  { title: "Counting with Friends", channel: "Sesame Street", duration: "10:20", safety: 100 },
+                  { title: "Colors and Shapes", channel: "Super Simple Songs", duration: "6:15", safety: 100 },
+                  { title: "Animal Sounds", channel: "Little Baby Bum", duration: "12:30", safety: 95 },
+                ].map((video, idx) => (
+                  <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-200 hover:border-[#FF9C8A] hover:shadow-lg transition-all">
+                    <div className="w-full h-32 bg-gradient-to-br from-[#FF9C8A] to-[#FF7B6B] rounded-2xl mb-3 flex items-center justify-center">
+                      <span className="text-white text-4xl">🎬</span>
+                    </div>
+                    <h3 className="font-bold text-sm text-[#2B4570] mb-1 line-clamp-2">{video.title}</h3>
+                    <p className="text-xs text-[#6B7280] mb-2">{video.channel}</p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[#6B7280]">{video.duration}</span>
+                      <span className="px-2 py-1 bg-green-50 text-green-600 rounded-full font-medium">
+                        {video.safety}% safe
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Safe Animated Content for Ages 6-8 */}
+            <div className="mb-12">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-[#2B4570] mb-1">Safe Animated Content for Ages 6-8</h2>
+                  <p className="text-sm text-[#6B7280]">Fun, age-appropriate cartoons and stories</p>
+                </div>
+                <span className="px-3 py-1 bg-purple-50 text-purple-600 rounded-full text-xs font-medium">18 videos</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[
+                  { title: "Friendship Stories", channel: "StoryBots", duration: "15:20", safety: 92 },
+                  { title: "Science Explorers", channel: "Wild Kratts", duration: "22:45", safety: 88 },
+                  { title: "Art Adventures", channel: "Art for Kids Hub", duration: "11:30", safety: 100 },
+                  { title: "Nature Documentaries", channel: "National Geographic Kids", duration: "18:00", safety: 95 },
+                ].map((video, idx) => (
+                  <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-200 hover:border-[#FF9C8A] hover:shadow-lg transition-all">
+                    <div className="w-full h-32 bg-gradient-to-br from-[#2B4570] to-[#1e3151] rounded-2xl mb-3 flex items-center justify-center">
+                      <span className="text-white text-4xl">🎨</span>
+                    </div>
+                    <h3 className="font-bold text-sm text-[#2B4570] mb-1 line-clamp-2">{video.title}</h3>
+                    <p className="text-xs text-[#6B7280] mb-2">{video.channel}</p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[#6B7280]">{video.duration}</span>
+                      <span className="px-2 py-1 bg-green-50 text-green-600 rounded-full font-medium">
+                        {video.safety}% safe
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Science & Nature for Ages 9-12 */}
+            <div className="mb-12">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-[#2B4570] mb-1">Science & Nature for Ages 9-12</h2>
+                  <p className="text-sm text-[#6B7280]">Engaging STEM content for curious minds</p>
+                </div>
+                <span className="px-3 py-1 bg-green-50 text-green-600 rounded-full text-xs font-medium">24 videos</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[
+                  { title: "Space Mysteries", channel: "NASA Kids", duration: "25:15", safety: 90 },
+                  { title: "Ocean Life", channel: "Blue Planet", duration: "20:30", safety: 93 },
+                  { title: "Physics Fun", channel: "Crash Course Kids", duration: "12:45", safety: 95 },
+                  { title: "Coding Basics", channel: "Code.org", duration: "16:20", safety: 100 },
+                ].map((video, idx) => (
+                  <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-200 hover:border-[#FF9C8A] hover:shadow-lg transition-all">
+                    <div className="w-full h-32 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl mb-3 flex items-center justify-center">
+                      <span className="text-white text-4xl">🔬</span>
+                    </div>
+                    <h3 className="font-bold text-sm text-[#2B4570] mb-1 line-clamp-2">{video.title}</h3>
+                    <p className="text-xs text-[#6B7280] mb-2">{video.channel}</p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[#6B7280]">{video.duration}</span>
+                      <span className="px-2 py-1 bg-green-50 text-green-600 rounded-full font-medium">
+                        {video.safety}% safe
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Creative & Arts for All Ages */}
+            <div className="mb-12">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-[#2B4570] mb-1">Creative & Arts for All Ages</h2>
+                  <p className="text-sm text-[#6B7280]">Inspiring creativity and self-expression</p>
+                </div>
+                <span className="px-3 py-1 bg-orange-50 text-orange-600 rounded-full text-xs font-medium">15 videos</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {[
+                  { title: "Drawing Tutorials", channel: "Art for Kids", duration: "14:30", safety: 100 },
+                  { title: "Music Lessons", channel: "Music Together", duration: "18:45", safety: 98 },
+                  { title: "DIY Crafts", channel: "Kids Craft", duration: "10:15", safety: 95 },
+                  { title: "Creative Dance", channel: "Movement Kids", duration: "12:00", safety: 100 },
+                ].map((video, idx) => (
+                  <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-200 hover:border-[#FF9C8A] hover:shadow-lg transition-all">
+                    <div className="w-full h-32 bg-gradient-to-br from-orange-400 to-pink-500 rounded-2xl mb-3 flex items-center justify-center">
+                      <span className="text-white text-4xl">🎭</span>
+                    </div>
+                    <h3 className="font-bold text-sm text-[#2B4570] mb-1 line-clamp-2">{video.title}</h3>
+                    <p className="text-xs text-[#6B7280] mb-2">{video.channel}</p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[#6B7280]">{video.duration}</span>
+                      <span className="px-2 py-1 bg-green-50 text-green-600 rounded-full font-medium">
+                        {video.safety}% safe
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* CTA Section */}
+            <div className="bg-gradient-to-br from-[#2B4570] to-[#1e3151] rounded-2xl p-8 text-center text-white">
+              <h2 className="text-3xl font-bold mb-3">Want personalized suggestions?</h2>
+              <p className="text-gray-200 mb-6 max-w-2xl mx-auto">
+                Create kid profiles and set content preferences to get custom video recommendations tailored to your family's values
+              </p>
+              <button
+                onClick={() => setCurrentView('profiles')}
+                className="px-8 py-3 bg-[#FF9C8A] hover:bg-[#7a9377] text-white rounded-2xl font-semibold transition-colors shadow-lg"
+              >
+                Set Up Profiles →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Membership View */}
+        {currentView === 'membership' && (
+          <div>
+            <div className="text-center mb-12">
+              <h1 className="text-4xl sm:text-5xl font-bold text-[#2B4570] mb-4">Upgrade to Premium</h1>
+              <p className="text-lg text-[#6B7280] max-w-2xl mx-auto">
+                Get unlimited video analysis, priority support, and advanced features
+              </p>
+            </div>
+
+            {/* Pricing Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto mb-12">
+              {/* Free Plan */}
+              <div className="bg-white rounded-2xl p-8 border-2 border-gray-200">
+                <h3 className="text-2xl font-bold text-[#2B4570] mb-2">Free</h3>
+                <div className="mb-6">
+                  <span className="text-4xl font-bold text-[#2B4570]">$0</span>
+                  <span className="text-[#6B7280]">/month</span>
+                </div>
+                <ul className="space-y-4 mb-8">
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">5 video analyses per month</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">Basic safety reports</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">1 kid profile</span>
+                  </li>
+                </ul>
+                <button className="w-full py-3 bg-gray-100 text-[#2B4570] rounded-2xl font-semibold hover:bg-gray-200 transition-colors">
+                  Current Plan
+                </button>
+              </div>
+
+              {/* Pro Plan - Featured */}
+              <div className="bg-gradient-to-br from-[#2B4570] to-[#1e3151] rounded-2xl p-8 border-2 border-[#FF9C8A] relative transform scale-105 shadow-2xl">
+                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
+                  <span className="px-4 py-1 bg-[#FF9C8A] text-white text-sm font-bold rounded-full">Most Popular</span>
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-2">Pro</h3>
+                <div className="mb-6">
+                  <span className="text-4xl font-bold text-white">$9.99</span>
+                  <span className="text-gray-300">/month</span>
+                </div>
+                <ul className="space-y-4 mb-8">
+                  <li className="flex items-start gap-3">
+                    <span className="text-[#FF9C8A]">✓</span>
+                    <span className="text-white">Unlimited video analyses</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-[#FF9C8A]">✓</span>
+                    <span className="text-white">Detailed safety reports</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-[#FF9C8A]">✓</span>
+                    <span className="text-white">Unlimited kid profiles</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-[#FF9C8A]">✓</span>
+                    <span className="text-white">Priority analysis queue</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-[#FF9C8A]">✓</span>
+                    <span className="text-white">Email support</span>
+                  </li>
+                </ul>
+                <button className="w-full py-3 bg-[#FF9C8A] text-white rounded-2xl font-semibold hover:bg-[#7a9377] transition-colors shadow-lg">
+                  Upgrade Now
+                </button>
+              </div>
+
+              {/* Family Plan */}
+              <div className="bg-white rounded-2xl p-8 border-2 border-gray-200">
+                <h3 className="text-2xl font-bold text-[#2B4570] mb-2">Family</h3>
+                <div className="mb-6">
+                  <span className="text-4xl font-bold text-[#2B4570]">$19.99</span>
+                  <span className="text-[#6B7280]">/month</span>
+                </div>
+                <ul className="space-y-4 mb-8">
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">Everything in Pro</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">Up to 5 parent accounts</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">Advanced analytics</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">Custom content rules</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="text-green-500">✓</span>
+                    <span className="text-[#6B7280]">Priority phone support</span>
+                  </li>
+                </ul>
+                <button className="w-full py-3 bg-[#2B4570] text-white rounded-2xl font-semibold hover:bg-[#1e3151] transition-colors">
+                  Upgrade Now
+                </button>
+              </div>
+            </div>
+
+            {/* Features Comparison */}
+            <div className="bg-white rounded-2xl p-8 border border-gray-200 shadow-lg max-w-5xl mx-auto">
+              <h2 className="text-2xl font-bold text-[#2B4570] mb-6">All plans include:</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="text-center">
+                  <div className="text-4xl mb-3">🛡️</div>
+                  <h3 className="font-bold text-[#2B4570] mb-2">AI Analysis</h3>
+                  <p className="text-sm text-[#6B7280]">Advanced content scanning</p>
+                </div>
+                <div className="text-center">
+                  <div className="text-4xl mb-3">📊</div>
+                  <h3 className="font-bold text-[#2B4570] mb-2">Safety Scores</h3>
+                  <p className="text-sm text-[#6B7280]">Detailed safety ratings</p>
+                </div>
+                <div className="text-center">
+                  <div className="text-4xl mb-3">🎯</div>
+                  <h3 className="font-bold text-[#2B4570] mb-2">Age Ratings</h3>
+                  <p className="text-sm text-[#6B7280]">Personalized recommendations</p>
+                </div>
+                <div className="text-center">
+                  <div className="text-4xl mb-3">🔒</div>
+                  <h3 className="font-bold text-[#2B4570] mb-2">Privacy First</h3>
+                  <p className="text-sm text-[#6B7280]">Your data stays private</p>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>
