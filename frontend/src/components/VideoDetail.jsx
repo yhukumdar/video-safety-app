@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { ArrowLeft, ExternalLink, AlertTriangle, CheckCircle, Clock, Shield, Play } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import AnalysisSlideshow from './AnalysisSlideshow'
 
 export default function VideoDetail({ reportId, onBack }) {
   const [report, setReport] = useState(null)

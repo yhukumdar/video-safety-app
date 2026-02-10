@@ -20,7 +20,7 @@ export default function Navigation({ currentView, setCurrentView, onViewChange }
             <img
               src="/popsight.svg"
               alt="PopSight"
-              className="h-14 sm:h-16 md:h-20 w-auto"
+              className="h-16 sm:h-20 md:h-24 lg:h-28 w-auto max-w-[300px] sm:max-w-[400px]"
             />
           </div>
 
