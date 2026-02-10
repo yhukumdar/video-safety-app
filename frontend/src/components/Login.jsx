@@ -53,7 +53,7 @@ export default function Login({ onBackToHome }) {
           )}
           <div className="mb-8">
             <img
-              src="/PopSightLogo.svg"
+              src="/popsight.svg"
               alt="PopSight"
               className="h-16"
             />

@@ -18,7 +18,7 @@ export default function Navigation({ currentView, setCurrentView, onViewChange }
           {/* Logo/Brand */}
           <div className="flex items-center">
             <img
-              src="/PopSightLogo.svg"
+              src="/popsight.svg"
               alt="PopSight"
               className="h-10 sm:h-12 w-auto"
             />
