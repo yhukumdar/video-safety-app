@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react'
-import { Shield, AlertTriangle, AlertCircle, CheckCircle, TrendingUp, Search, Filter, ExternalLink } from 'lucide-react'
+import { Shield, AlertTriangle, AlertCircle, CheckCircle, TrendingUp, Search, Filter, ExternalLink, Download, ArrowUpDown } from 'lucide-react'
 import { StatCard, Card } from './ui/Card'
 import { Badge, ScoreBadge } from './ui/Badge'
-import { Input } from './ui/Input'
+import { Input, Select } from './ui/Input'
+import { PrimaryButton, SecondaryButton } from './ui/Button'
 import { supabase } from '../supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function VideoHistory({ onViewDetails }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterRisk, setFilterRisk] = useState('all')
+  const [sortBy, setSortBy] = useState('date-desc')
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
   const { parentProfile } = useAuth()
@@ -47,15 +49,92 @@ export default function VideoHistory({ onViewDetails }) {
     dangerVideos: reports.filter(r => (r.analysis_result?.safety_score || 0) >= 70).length
   }
 
-  const filteredVideos = reports.filter(report => {
-    const matchesSearch = (report.video_title || '').toLowerCase().includes(searchQuery.toLowerCase())
-    const safetyScore = report.analysis_result?.safety_score || 0
-    const matchesFilter = filterRisk === 'all' ||
-      (filterRisk === 'safe' && safetyScore < 40) ||
-      (filterRisk === 'caution' && safetyScore >= 40 && safetyScore < 70) ||
-      (filterRisk === 'danger' && safetyScore >= 70)
-    return matchesSearch && matchesFilter
-  })
+  const filteredAndSortedVideos = reports
+    .filter(report => {
+      const matchesSearch = (report.video_title || '').toLowerCase().includes(searchQuery.toLowerCase())
+      const safetyScore = report.analysis_result?.safety_score || 0
+      const matchesFilter = filterRisk === 'all' ||
+        (filterRisk === 'safe' && safetyScore < 40) ||
+        (filterRisk === 'caution' && safetyScore >= 40 && safetyScore < 70) ||
+        (filterRisk === 'danger' && safetyScore >= 70)
+      return matchesSearch && matchesFilter
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'date-desc':
+          return new Date(b.created_at) - new Date(a.created_at)
+        case 'date-asc':
+          return new Date(a.created_at) - new Date(b.created_at)
+        case 'safety-asc':
+          return (a.analysis_result?.safety_score || 0) - (b.analysis_result?.safety_score || 0)
+        case 'safety-desc':
+          return (b.analysis_result?.safety_score || 0) - (a.analysis_result?.safety_score || 0)
+        default:
+          return 0
+      }
+    })
+
+  const exportToPDF = async () => {
+    // Create a simple HTML report
+    const reportHTML = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Video Safety Report</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 40px; }
+            h1 { color: #2A3D66; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background-color: #f8f9fa; font-weight: bold; }
+            .safe { color: #10b981; }
+            .caution { color: #f59e0b; }
+            .danger { color: #ef4444; }
+          </style>
+        </head>
+        <body>
+          <h1>PopSight Video Safety Report</h1>
+          <p>Generated: ${new Date().toLocaleDateString()}</p>
+          <p>Total Videos: ${filteredAndSortedVideos.length}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Video Title</th>
+                <th>Safety Score</th>
+                <th>Age Recommendation</th>
+                <th>Analyzed Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredAndSortedVideos.map(report => {
+                const safetyScore = report.analysis_result?.safety_score || 0
+                const scoreClass = safetyScore < 40 ? 'safe' : safetyScore < 70 ? 'caution' : 'danger'
+                return `
+                  <tr>
+                    <td>${report.video_title || 'Unknown'}</td>
+                    <td class="${scoreClass}">${safetyScore}/100</td>
+                    <td>${report.analysis_result?.age_recommendation || 'N/A'}</td>
+                    <td>${new Date(report.created_at).toLocaleDateString()}</td>
+                  </tr>
+                `
+              }).join('')}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `
+
+    // Create a blob and download
+    const blob = new Blob([reportHTML], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `popsight-report-${new Date().toISOString().split('T')[0]}.html`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
 
   if (loading) {
     return (
@@ -166,16 +245,37 @@ export default function VideoHistory({ onViewDetails }) {
 
         {/* Filters and Search */}
         <Card className="p-6">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1">
-              <Input
-                placeholder="Search videos..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                icon={<Search className="w-5 h-5" />}
-              />
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <Input
+                  placeholder="Search videos..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  icon={<Search className="w-5 h-5" />}
+                />
+              </div>
+              <div className="flex gap-2 items-center">
+                <Select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="w-48"
+                >
+                  <option value="date-desc">Newest First</option>
+                  <option value="date-asc">Oldest First</option>
+                  <option value="safety-asc">Safest First</option>
+                  <option value="safety-desc">Riskiest First</option>
+                </Select>
+                <PrimaryButton
+                  onClick={exportToPDF}
+                  icon={<Download className="w-5 h-5" />}
+                  disabled={filteredAndSortedVideos.length === 0}
+                >
+                  Export Report
+                </PrimaryButton>
+              </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               {['all', 'safe', 'caution', 'danger'].map((filter) => (
                 <button
                   key={filter}
@@ -208,7 +308,7 @@ export default function VideoHistory({ onViewDetails }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredVideos.map((report) => {
+                {filteredAndSortedVideos.map((report) => {
                   const safetyScore = report.analysis_result?.safety_score || 0
                   const concerns = report.analysis_result?.concerns || []
                   const videoId = report.video_url?.split('v=')[1]?.split('&')[0]
@@ -279,7 +379,7 @@ export default function VideoHistory({ onViewDetails }) {
             </table>
           </div>
 
-          {filteredVideos.length === 0 && (
+          {filteredAndSortedVideos.length === 0 && (
             <div className="py-12 text-center">
               <p className="text-[#6B7280] text-lg">No videos found</p>
             </div>
