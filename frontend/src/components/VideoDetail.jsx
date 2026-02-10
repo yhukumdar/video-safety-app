@@ -221,21 +221,15 @@ export default function VideoDetail({ reportId, onBack }) {
 
                 {/* Score Display */}
                 <div className="text-center">
-                  {safetyScore > 0 ? (
-                    <div className={`inline-flex flex-col items-center justify-center w-28 h-28 rounded-2xl shadow-lg ${
-                      safetyScore >= 80 ? 'bg-gradient-to-br from-green-400 to-green-600' :
-                      safetyScore >= 50 ? 'bg-gradient-to-br from-yellow-400 to-yellow-600' :
-                      'bg-gradient-to-br from-red-400 to-red-600'
-                    }`}>
-                      <span className="text-5xl font-black text-white">{safetyScore}</span>
-                      <span className="text-sm font-semibold text-white opacity-90">/100</span>
-                    </div>
-                  ) : (
-                    <div className="inline-flex flex-col items-center justify-center w-28 h-28 rounded-2xl shadow-lg bg-gradient-to-br from-blue-400 to-blue-600 animate-pulse">
-                      <span className="text-4xl font-black text-white">...</span>
-                      <span className="text-xs font-semibold text-white opacity-90">analyzing</span>
-                    </div>
-                  )}
+                  <div className={`inline-flex flex-col items-center justify-center w-28 h-28 rounded-2xl shadow-lg ${
+                    safetyScore >= 80 ? 'bg-gradient-to-br from-green-400 to-green-600' :
+                    safetyScore >= 50 ? 'bg-gradient-to-br from-yellow-400 to-yellow-600' :
+                    safetyScore > 0 ? 'bg-gradient-to-br from-red-400 to-red-600' :
+                    'bg-gradient-to-br from-gray-400 to-gray-500'
+                  }`}>
+                    <span className="text-5xl font-black text-white">{safetyScore}</span>
+                    <span className="text-sm font-semibold text-white opacity-90">/100</span>
+                  </div>
                 </div>
               </div>
             </div>
