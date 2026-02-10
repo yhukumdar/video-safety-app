@@ -1,51 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
-  <!-- Background circle with gradient -->
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60">
   <defs>
-    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#5BC5B8;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#45B5A8;stop-opacity:1" />
-    </linearGradient>
     <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" style="stop-color:#FF9C8A;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#FF7B6B;stop-opacity:1" />
     </linearGradient>
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FF9C8A;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#5BC5B8;stop-opacity:1" />
+    </linearGradient>
   </defs>
 
-  <!-- Background circle -->
-  <circle cx="100" cy="100" r="95" fill="url(#bgGradient)"/>
-
   <!-- Shield shape -->
-  <path d="M 100 30
-           L 150 50
-           L 150 100
-           Q 150 140, 100 160
-           Q 50 140, 50 100
-           L 50 50
+  <path d="M 30 5
+           L 50 12
+           L 50 32
+           Q 50 45, 30 52
+           Q 10 45, 10 32
+           L 10 12
            Z"
         fill="url(#shieldGradient)"
         stroke="white"
-        stroke-width="3"/>
+        stroke-width="2"/>
 
   <!-- Eye shape inside shield -->
-  <ellipse cx="100" cy="95" rx="30" ry="20" fill="white"/>
+  <ellipse cx="30" cy="28" rx="12" ry="8" fill="white"/>
 
-  <!-- Pupil with gradient -->
-  <defs>
-    <radialGradient id="pupilGradient">
-      <stop offset="0%" style="stop-color:#2D3748;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1A202C;stop-opacity:1" />
-    </radialGradient>
-  </defs>
-  <circle cx="100" cy="95" r="12" fill="url(#pupilGradient)"/>
+  <!-- Pupil -->
+  <circle cx="30" cy="28" r="5" fill="#2D3748"/>
 
   <!-- Highlight in eye -->
-  <circle cx="106" cy="90" r="4" fill="white" opacity="0.8"/>
+  <circle cx="33" cy="26" r="2" fill="white" opacity="0.9"/>
 
   <!-- Checkmark on shield -->
-  <path d="M 85 115 L 95 125 L 115 105"
+  <path d="M 22 38 L 28 44 L 38 34"
         stroke="white"
-        stroke-width="5"
+        stroke-width="3"
         stroke-linecap="round"
         stroke-linejoin="round"
         fill="none"/>
+
+  <!-- PopSight Text -->
+  <text x="65" y="40" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="32" font-weight="900" fill="url(#textGradient)">
+    PopSight
+  </text>
 </svg>

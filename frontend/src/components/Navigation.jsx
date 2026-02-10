@@ -16,16 +16,12 @@ export default function Navigation({ currentView, setCurrentView, onViewChange }
       <div className="max-w-6xl mx-auto px-4">
         <div className="flex items-center justify-between h-18">
           {/* Logo/Brand */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center">
             <img
               src="/PopSightLogo.svg"
-              alt="PopSight Logo"
-              className="w-10 h-10 sm:w-12 sm:h-12"
+              alt="PopSight"
+              className="h-10 sm:h-12 w-auto"
             />
-            <span className="text-xl sm:text-2xl font-black bg-gradient-to-r from-[#FF9C8A] to-[#5BC5B8] bg-clip-text text-transparent tracking-tight">
-              <span className="hidden sm:inline">PopSight</span>
-              <span className="sm:hidden">PS</span>
-            </span>
           </div>
 
           {/* Navigation Links */}

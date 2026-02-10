@@ -51,13 +51,12 @@ export default function Login({ onBackToHome }) {
               <span className="font-medium">Back to home</span>
             </button>
           )}
-          <div className="flex items-center gap-4 mb-8">
+          <div className="mb-8">
             <img
               src="/PopSightLogo.svg"
-              alt="PopSight Logo"
-              className="w-20 h-20"
+              alt="PopSight"
+              className="h-16"
             />
-            <h1 className="text-4xl font-black tracking-tight">PopSight</h1>
           </div>
           <h2 className="text-5xl sm:text-6xl font-black mb-6 max-w-2xl leading-tight bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">
             Know what your kids are watching
