@@ -133,15 +133,7 @@ export default function VideoDetail({ reportId, onBack }) {
 
       {/* Processing Status Bar - Show above report card when processing */}
       {report.status === 'processing' && (
-        <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl p-4 mb-6 shadow-lg">
-          <div className="flex items-center gap-3 text-white">
-            <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent"></div>
-            <div className="flex-1">
-              <p className="font-bold">Analysis in Progress...</p>
-              <p className="text-xs text-blue-100">Updates appear automatically as AI reviews the content</p>
-            </div>
-          </div>
-        </div>
+        <AnalysisSlideshow />
       )}
 
       {/* Failed Status */}
